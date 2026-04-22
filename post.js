@@ -263,12 +263,13 @@ async function ensureComposerHasContent(page, composeDialog, expectedContent) {
   await page.keyboard.type(expectedContent, { delay: randomBetween(15, 45) });
 }
 
-async function waitForComposerDialog(page) {
+async function waitForComposerDialog(page, timeoutMs = 20000) {
   const dialogCandidates = [
     page
       .locator("div[role='dialog'][data-test-modal]")
       .filter({ has: page.locator(".share-box") })
       .last(),
+    page.locator("div.share-box-v2__modal").last(),
     page
       .locator("div[role='dialog'].artdeco-modal")
       .filter({ has: page.locator(".share-box") })
@@ -280,9 +281,11 @@ async function waitForComposerDialog(page) {
     page.locator("div[role='dialog']").last(),
   ];
 
+  const perCandidateTimeout = Math.max(2500, Math.floor(timeoutMs / dialogCandidates.length));
+
   for (const dialog of dialogCandidates) {
     try {
-      await dialog.waitFor({ timeout: 20000, state: "visible" });
+      await dialog.waitFor({ timeout: perCandidateTimeout, state: "visible" });
     } catch (_error) {
       continue;
     }
@@ -293,6 +296,48 @@ async function waitForComposerDialog(page) {
     if (hasShareBox || hasHeader || hasDismiss) {
       return dialog;
     }
+  }
+
+  throw new Error("Could not detect LinkedIn composer dialog after clicking Start a post.");
+}
+
+async function openComposerFromFeed(page) {
+  const startPostCandidates = [
+    page.locator("[componentkey='draft-text-replaceable-component']").first(),
+    page.locator("div[componentkey='draft-text-replaceable-component'] p", { hasText: /start a post/i }).first(),
+    page.locator("[componentkey='draft-text-replaceable-component'] p").first(),
+    page.getByRole("button", { name: /start a post/i }).first(),
+  ];
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    for (const candidate of startPostCandidates) {
+      if (!(await candidate.count())) {
+        continue;
+      }
+
+      try {
+        await candidate.waitFor({ timeout: 5000, state: "visible" });
+        await candidate.scrollIntoViewIfNeeded();
+        await candidate.click();
+      } catch (_error) {
+        try {
+          await candidate.click({ force: true });
+        } catch (_forceError) {
+          continue;
+        }
+      }
+
+      await humanPause(page, 500, 1100);
+      try {
+        return await waitForComposerDialog(page, 9000);
+      } catch (_dialogError) {
+        // Click did not open dialog; try next candidate.
+      }
+    }
+
+    // On subsequent attempts, jump back to top of feed before retrying trigger clicks.
+    await page.keyboard.press("Home").catch(() => {});
+    await humanPause(page, 500, 900);
   }
 
   throw new Error("Could not detect LinkedIn composer dialog after clicking Start a post.");
@@ -518,13 +563,7 @@ async function runPostingFlow(postInput, options = {}) {
         console.log(`[post] Email approval detected for post #${post.id}. Skipping local compose confirmation.`);
       }
 
-      const startPostButton = page.getByRole("button", { name: /start a post/i }).first();
-      await startPostButton.waitFor({ timeout: 20000 });
-      await startPostButton.click();
-
-      await humanPause(page, 800, 1800);
-
-      const composeDialog = await waitForComposerDialog(page);
+      const composeDialog = await openComposerFromFeed(page);
 
       if (!skipApproval) {
         const approvedToSchedule = await requestApproval(

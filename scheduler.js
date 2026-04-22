@@ -1,49 +1,88 @@
 const cron = require("node-cron");
 const dotenv = require("dotenv");
 
-const { getNextPendingPost, markApprovalEmailSent } = require("./db");
+const { markApprovalEmailSent, getSetting } = require("./db");
 const { findApprovedPostsFromInbox } = require("./approval-inbox");
 const { sendApprovalRequestEmail } = require("./email");
 const { notifyPostAvailable } = require("./notifier");
+const { listPipelineDefinitions } = require("./pipelines");
 const { runPostingFlow } = require("./post");
 
 dotenv.config();
 
 const activePostIds = new Set();
+let postingQueue = Promise.resolve();
 
-async function processPost(post, options = {}) {
-  if (activePostIds.has(post.id)) {
-    console.log(`[scheduler] Post #${post.id} is already being processed.`);
-    return;
-  }
-
-  activePostIds.add(post.id);
-  try {
-    await runPostingFlow(post, options);
-  } finally {
-    activePostIds.delete(post.id);
-  }
-}
-
-async function checkPendingPost() {
-  try {
-    const post = getNextPendingPost();
-
-    if (!post) {
-      console.log("[scheduler] No pending posts.");
+function queuePostProcessing(post, options = {}) {
+  const run = async () => {
+    if (activePostIds.has(post.id)) {
+      console.log(`[scheduler] Post #${post.id} is already being processed.`);
       return;
     }
 
-    console.log(`[scheduler] Pending post found (#${post.id}). Sending approval email and notification...`);
-    const messageId = await sendApprovalRequestEmail({ post });
-    if (messageId) {
-      markApprovalEmailSent(post.id, messageId);
-      console.log(`[scheduler] Approval email sent for post #${post.id}.`);
+    activePostIds.add(post.id);
+    try {
+      await runPostingFlow(post, options);
+    } finally {
+      activePostIds.delete(post.id);
+    }
+  };
+
+  const nextRun = postingQueue.then(run, run);
+  postingQueue = nextRun.catch(() => {});
+  return nextRun;
+}
+
+async function dispatchPostAccordingToMode(post, pipeline) {
+  console.log(`[scheduler] ${pipeline.name} created pending post #${post.id}. Checking posting mode...`);
+  const postingMode = getSetting("posting_mode", "confirm_email");
+
+  if (postingMode === "auto") {
+    console.log(`[scheduler] Posting mode is AUTO. Posting immediately without confirmation...`);
+    await queuePostProcessing(post, { skipApproval: true });
+    return;
+  }
+
+  if (postingMode === "confirm_push") {
+    console.log(`[scheduler] Posting mode is PUSH. Sending push notification for approval...`);
+    await notifyPostAvailable(post);
+    return;
+  }
+
+  console.log(`[scheduler] Posting mode is EMAIL. Sending approval email...`);
+  const messageId = await sendApprovalRequestEmail({ post });
+  if (messageId) {
+    markApprovalEmailSent(post.id, messageId);
+    console.log(`[scheduler] Approval email sent for post #${post.id}.`);
+  }
+}
+
+async function runPipeline(pipelineKey) {
+  const pipeline = listPipelineDefinitions().find((entry) => entry.key === pipelineKey);
+  if (!pipeline) {
+    throw new Error(`Unknown pipeline: ${pipelineKey}`);
+  }
+
+  const enabled = getSetting(pipeline.settingKey, pipeline.defaultEnabled ? "true" : "false") !== "false";
+  if (!enabled) {
+    console.log(`[scheduler] ${pipeline.name} is disabled. Skipping.`);
+    return null;
+  }
+
+  try {
+    const post = await pipeline.generatePendingPost();
+    if (!post) {
+      console.log(`[scheduler] ${pipeline.name} had nothing new to generate.`);
+      return null;
     }
 
-    await notifyPostAvailable(post);
+    const typeLabel = post.contentType ? ` [type: ${post.contentType.name}]` : "";
+    console.log(`[scheduler] ${pipeline.name} generated post #${post.id}.${typeLabel}`);
+    await dispatchPostAccordingToMode(post, pipeline);
+    return post;
   } catch (error) {
-    console.error("[scheduler] Check failed:", error instanceof Error ? error.message : error);
+    console.error(`[scheduler] ${pipeline.name} failed:`, error instanceof Error ? error.message : error);
+    return null;
   }
 }
 
@@ -56,7 +95,7 @@ async function checkEmailApprovals() {
 
     for (const post of approvedPosts) {
       console.log(`[scheduler] Email approval received for post #${post.id}. Starting automated posting flow...`);
-      await processPost(post, { skipApproval: true });
+      await queuePostProcessing(post, { skipApproval: true });
     }
   } catch (error) {
     console.error("[scheduler] Email approval check failed:", error instanceof Error ? error.message : error);
@@ -64,20 +103,26 @@ async function checkEmailApprovals() {
 }
 
 function startScheduler() {
-  // Every 3 hours at minute 0.
-  cron.schedule("0 */3 * * *", async () => {
-    await checkPendingPost();
-  });
+  for (const pipeline of listPipelineDefinitions()) {
+    cron.schedule(pipeline.cron, async () => {
+      await runPipeline(pipeline.key);
+    });
+  }
 
   cron.schedule(process.env.EMAIL_APPROVAL_POLL_CRON || "*/1 * * * *", async () => {
     await checkEmailApprovals();
   });
 
-  console.log("[scheduler] Running. Checking every 3 hours.");
-  console.log("[scheduler] First check runs immediately.");
+  console.log("[scheduler] Running content pipelines.");
+  for (const pipeline of listPipelineDefinitions()) {
+    console.log(`[scheduler] ${pipeline.name}: ${pipeline.cadenceLabel} (${pipeline.cron})`);
+  }
+  console.log("[scheduler] First pipeline checks run immediately.");
   console.log("[scheduler] Polling inbox for approval replies every minute.");
 
-  checkPendingPost();
+  for (const pipeline of listPipelineDefinitions()) {
+    runPipeline(pipeline.key);
+  }
   checkEmailApprovals();
 }
 
@@ -87,6 +132,8 @@ if (require.main === module) {
 
 module.exports = {
   checkEmailApprovals,
+  dispatchPostAccordingToMode,
+  runPipeline,
   startScheduler,
-  checkPendingPost,
+  checkPendingPost: () => runPipeline("work_context"),
 };

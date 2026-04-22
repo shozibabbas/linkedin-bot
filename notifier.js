@@ -33,7 +33,7 @@ async function notifyPostAvailable(post) {
 
         try {
           const { runPostingFlow } = require("./post");
-          await runPostingFlow(post);
+          await runPostingFlow(post, { skipApproval: true });
           resolve(true);
         } catch (err) {
           console.error("[notifier] Posting flow failed:", err instanceof Error ? err.message : err);

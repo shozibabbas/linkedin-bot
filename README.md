@@ -1,18 +1,37 @@
-# LinkedIn Human-in-the-Loop CLI (macOS)
+# LinkedIn Human-in-the-Loop Bot (macOS, Linux, Windows)
 
-A minimal but production-quality Node.js CLI utility that queues LinkedIn posts in SQLite, checks every 3 hours, notifies you on macOS, and schedules posts after manual confirmation in a visible Playwright browser.
+Local LinkedIn automation with a queue, scheduler, admin portal, and two AI content pipelines:
+
+- Work context pipeline: every 3 hours
+- RSS review pipeline: every 6 hours
+
+Both pipelines use the same posting mode controls:
+
+- `confirm_email`
+- `confirm_push`
+- `auto`
 
 ## Features
 
-- Local queue of LinkedIn posts in SQLite (`better-sqlite3`)
-- 3-hour scheduler (`node-cron`)
-- macOS notification trigger (`node-notifier`)
-- Human-in-the-loop posting flow (`playwright`, non-headless only)
+- SQLite-backed post queue (`posts.db`)
+- Cross-platform scheduler (`node-cron`)
+- Visible browser automation (`playwright`, Chromium)
 - Session persistence via `auth.json`
-- Success/failure email alerts (`nodemailer`)
-- Safe failure handling with DB error logging
+- Email approvals and result notifications (`nodemailer`, `imapflow`)
+- Web admin UI (React + Express)
+- Pipeline toggles and posting mode controls from the portal
+- AI generation with anti-repeat context
 
-## 1) Install
+## Prerequisites
+
+- Node.js 20+
+- npm
+- Chromium installed through Playwright
+- A LinkedIn account with manual login access (including 2FA if enabled)
+
+## 1) Install (All OS)
+
+### macOS / Linux
 
 ```bash
 npm install
@@ -20,233 +39,173 @@ npx playwright install chromium
 cp .env.example .env
 ```
 
-Fill `.env` with:
+### Windows PowerShell
+
+```powershell
+npm install
+npx playwright install chromium
+Copy-Item .env.example .env
+```
+
+Fill `.env` with required values:
 
 - `EMAIL_USER`
 - `EMAIL_PASS`
 - `EMAIL_TO`
 - `EMAIL_APPROVAL_SECRET`
 - `IMAP_HOST`
+- `OPENAI_API_KEY`
 
-Optional inbox settings:
+Recommended optional values:
 
-- `IMAP_USER` (defaults to `EMAIL_USER`)
-- `IMAP_PASS` (defaults to `EMAIL_PASS`)
-- `IMAP_PORT` (defaults to `993`)
-- `IMAP_SECURE` (defaults to `true`)
+- `OPENAI_MODEL` (default: `gpt-4.1-mini`)
+- `WORK_CONTEXT_URL`
+- `REVIEW_RSS_FEED_URL` (default: `https://dev.to/feed`)
+- `WEB_PORT` (default: `60396`)
 
-## 2) Save LinkedIn Login Session
+## 2) Login Step (Important)
+
+Run:
 
 ```bash
 node login.js
 ```
 
-What it does:
+What happens:
 
-- Opens Chromium in visible mode
-- Takes you to LinkedIn login
-- Waits for manual login / 2FA (up to 90 seconds, or press ENTER when done)
-- Saves session to `auth.json`
+1. Chromium opens to LinkedIn login.
+2. You complete username/password and any 2FA manually.
+3. Press ENTER in terminal when done, or wait up to 90 seconds.
+4. Session is saved to `auth.json`.
 
-## 3) Add Posts to Queue
+Notes:
 
-```bash
-node add-post.js "My LinkedIn content"
-```
+- If login expires later, run `node login.js` again.
+- Keep `auth.json` private; it contains session state.
+- If your terminal is non-interactive, the script waits 90 seconds automatically.
 
-If no argument is provided, you can type content interactively in the terminal.
+## 3) Start System
 
-## 4) Start Scheduler (every 3 hours)
+### Scheduler + pipelines
 
 ```bash
 node scheduler.js
 ```
 
-Behavior:
-
-- Runs an immediate check on startup
-- Then runs at minute `0` every 3 hours
-- If a pending post exists, sends a macOS notification with a preview
-- Also sends an approval email containing the pending post content
-- Polls the inbox every minute for approval replies
-
-## 5) Email Approval Flow
-
-When the scheduler finds a pending post:
-
-1. It sends you an email containing the post content.
-2. To approve it remotely, reply in the same email thread.
-3. Include the exact value of `EMAIL_APPROVAL_SECRET` somewhere in the reply body.
-4. The scheduler polls your inbox.
-5. When it finds a matching reply, it automatically runs the posting flow on your machine without local confirmation dialogs.
-
-Notes:
-
-- Reply matching is thread-based using the original approval email.
-- The reply must contain the exact secret string.
-- The system only auto-runs for posts still in `pending` status.
-
-## 6) Notification + Posting Flow
-
-When notification appears:
-
-1. Click the notification.
-2. Browser opens in non-headless mode.
-3. Saved LinkedIn session is loaded from `auth.json`.
-4. Post content is shown in terminal.
-5. Approve a GUI confirmation dialog to open composer.
-6. Approve a second GUI confirmation dialog to schedule it for 15 minutes later.
-
-Safety guarantees:
-
-- Never auto-posts without explicit GUI confirmation
-- Schedules post for 15 minutes ahead (so you can still edit/review on LinkedIn)
-- Uses random small delays to mimic human pacing
-- Marks DB state as `posted` or `failed`
-- Sends success/failure email
-
-## 7) Manual Trigger (Immediate)
+Or:
 
 ```bash
-node post-now.js
+npm run start
 ```
 
-This fetches the next pending post and runs the same human-confirmation posting flow.
-
-Manual auto-approved flow (no email approval step, no local confirmation dialogs):
-
-```bash
-npm run post-now:auto
-```
-
-This runs the same posting/scheduling logic with approvals pre-approved and result email disabled.
-
-## 8) Web Admin UI (React CRUD)
-
-Start the local admin UI and API server:
+### Web admin portal
 
 ```bash
 npm run web:start
 ```
 
-What it does:
+Portal URL:
 
-- Builds the React app
-- Starts a local Express server on a stable port (`60396` by default)
-- Serves a CRUD UI for the same `posts.db` database used by the scheduler
+- `http://localhost:60396` (or your `WEB_PORT`)
 
-The server is available at:
+## 4) Pipelines
 
-```bash
-http://localhost:60396
-```
+### Work Context Pipeline (3-hour cadence)
 
-Because `/etc/hosts` includes `linkedin-bot.local`, the same UI is also reachable as:
+- Source: `WORK_CONTEXT_URL`
+- Uses scraped context + prior posts to generate posts
+- Rotates content type by timeslot for variety
 
-```bash
-http://linkedin-bot.local:60396
-```
+### RSS Review Pipeline (6-hour cadence)
 
-Important:
+- Source: `REVIEW_RSS_FEED_URL`
+- Picks the most relevant article against work context
+- Generates a senior-style review post
+- Includes article URL naturally in the post body
 
-- Override the default with `WEB_PORT` in `.env` if needed.
-- The web UI supports create, read, update, and delete operations for LinkedIn posts.
-- The React app and API are served by the same Node process.
+### Enable/Disable Pipelines
 
-## SQLite Schema
+Use the admin portal Automation section:
 
-Database file: `posts.db`
+- Toggle each pipeline `On` / `Off`
+- Use `Generate now` per pipeline
 
-Table: `posts`
+## 5) Posting Modes (Apply to Both Pipelines)
 
-- `id` INTEGER PRIMARY KEY
-- `content` TEXT
-- `status` TEXT (`pending`, `posted`, `failed`)
-- `posted_at` DATETIME
-- `error` TEXT
+- `confirm_email`: sends approval email, waits for reply containing `EMAIL_APPROVAL_SECRET`
+- `confirm_push`: sends local push notification, click to approve
+- `auto`: posts immediately when a pipeline creates a post
 
-## macOS Background Setup
+All modes keep result emails for posted/failed outcomes when email is configured.
 
-### Option A (simple)
+## 6) Common Commands
 
-Run in a terminal session:
+### Add a manual post
 
 ```bash
-node scheduler.js
+node add-post.js "My LinkedIn content"
 ```
 
-### Option B (recommended): Launch Agent
-
-1. Create LaunchAgents folder if needed:
+### Trigger posting flow now (with normal approvals)
 
 ```bash
-mkdir -p ~/Library/LaunchAgents
+node post-now.js
 ```
 
-2. Create file `~/Library/LaunchAgents/com.yourname.linkedin-bot.plist` with this content (edit paths):
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.yourname.linkedin-bot</string>
-
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/local/bin/node</string>
-    <string>/Users/your-user/Projects/linkedin-bot/launch-agent-entry.js</string>
-  </array>
-
-  <key>WorkingDirectory</key>
-  <string>/Users/your-user/Projects/linkedin-bot</string>
-
-  <key>RunAtLoad</key>
-  <true/>
-
-  <key>KeepAlive</key>
-  <true/>
-
-  <key>StandardOutPath</key>
-  <string>/tmp/linkedin-bot.out.log</string>
-
-  <key>StandardErrorPath</key>
-  <string>/tmp/linkedin-bot.err.log</string>
-</dict>
-</plist>
-```
-
-This entrypoint starts both the scheduler and the web admin server in a single LaunchAgent process.
-
-3. Load it:
+### Trigger posting flow now (auto-approved)
 
 ```bash
-launchctl load ~/Library/LaunchAgents/com.yourname.linkedin-bot.plist
+npm run post-now:auto
 ```
 
-4. Start now:
+### Login refresh
 
 ```bash
-launchctl start com.yourname.linkedin-bot
+node login.js
 ```
 
-5. Verify:
+## 7) Windows and Linux Notes
 
-```bash
-launchctl list | grep linkedin-bot
-```
+- Core flow works on all OS because posting uses Playwright with visible Chromium.
+- macOS has AppleScript approval dialogs; other OS use the in-browser approval fallback.
+- Desktop notification behavior can vary by environment and notification daemon.
+- On headless Linux servers, GUI/browser-based flows require a desktop session or virtual display.
 
-6. Stop/unload:
+## 8) Background Run Guidance
 
-```bash
-launchctl unload ~/Library/LaunchAgents/com.yourname.linkedin-bot.plist
-```
+### macOS
 
-## Operational Notes
+- Use LaunchAgent with `launch-agent-entry.js`.
 
-- Keep `auth.json` private and re-run `node login.js` if session expires.
-- Approvals are GUI-based: first via AppleScript dialog, with an in-browser approval page as fallback.
-- Email approvals can bypass local GUI prompts after a valid reply containing `EMAIL_APPROVAL_SECRET` is received in the same email thread.
-- If no GUI session is available, posting will fail safely and mark the post as failed.
-- LinkedIn UI may change over time; selectors are role/text based but may need updates if the UI changes significantly.
+### Linux
+
+- Use a `systemd` service for `node launch-agent-entry.js`.
+
+### Windows
+
+- Use Task Scheduler to run `node launch-agent-entry.js` at logon/startup.
+
+## 9) Database
+
+Primary DB: `posts.db`
+
+Posts include pipeline metadata:
+
+- `source_pipeline`
+- `source_reference`
+
+Statuses:
+
+- `pending`
+- `posted`
+- `failed`
+
+## 10) LLM Operator Docs
+
+For AI-agent friendly operation, see:
+
+- `LLM_OPERATOR_GUIDE.md`
+- `.github/skills/linkedin-bot-ops/SKILL.md`
+- `AGENTS.md`
+
+These files document install, login, commands, safety checks, and execution patterns for Claude, Copilot, and similar LLM agents.

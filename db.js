@@ -17,6 +17,24 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS web_context_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_url TEXT NOT NULL,
+    fetched_date TEXT NOT NULL,
+    fetched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    content TEXT NOT NULL,
+    UNIQUE(source_url, fetched_date)
+  );
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+`);
+
 const existingColumns = db.prepare("PRAGMA table_info(posts)").all().map((column) => column.name);
 
 if (!existingColumns.includes("approval_email_message_id")) {
@@ -31,13 +49,25 @@ if (!existingColumns.includes("email_approved_at")) {
   db.exec("ALTER TABLE posts ADD COLUMN email_approved_at DATETIME");
 }
 
+if (!existingColumns.includes("source_pipeline")) {
+  db.exec("ALTER TABLE posts ADD COLUMN source_pipeline TEXT");
+}
+
+if (!existingColumns.includes("source_reference")) {
+  db.exec("ALTER TABLE posts ADD COLUMN source_reference TEXT");
+}
+
+db.exec("CREATE INDEX IF NOT EXISTS idx_posts_source_reference ON posts(source_pipeline, source_reference)");
+
 const addPostStmt = db.prepare(`
-  INSERT INTO posts (content, status)
-  VALUES (?, 'pending')
+  INSERT INTO posts (content, status, source_pipeline, source_reference)
+  VALUES (@content, 'pending', @source_pipeline, @source_reference)
 `);
 
 const nextPendingStmt = db.prepare(`
-  SELECT id, content, status, posted_at, error, created_at
+  SELECT id, content, status, posted_at, error, created_at,
+         approval_email_message_id, approval_requested_at, email_approved_at,
+         source_pipeline, source_reference
   FROM posts
   WHERE status = 'pending'
   ORDER BY id ASC
@@ -46,21 +76,24 @@ const nextPendingStmt = db.prepare(`
 
 const listPostsStmt = db.prepare(`
   SELECT id, content, status, posted_at, error, created_at,
-         approval_email_message_id, approval_requested_at, email_approved_at
+         approval_email_message_id, approval_requested_at, email_approved_at,
+         source_pipeline, source_reference
   FROM posts
   ORDER BY id DESC
 `);
 
 const getPostByIdStmt = db.prepare(`
   SELECT id, content, status, posted_at, error, created_at,
-         approval_email_message_id, approval_requested_at, email_approved_at
+         approval_email_message_id, approval_requested_at, email_approved_at,
+         source_pipeline, source_reference
   FROM posts
   WHERE id = ?
 `);
 
 const listPendingApprovalPostsStmt = db.prepare(`
   SELECT id, content, status, posted_at, error, created_at,
-         approval_email_message_id, approval_requested_at, email_approved_at
+         approval_email_message_id, approval_requested_at, email_approved_at,
+         source_pipeline, source_reference
   FROM posts
   WHERE status = 'pending'
     AND approval_email_message_id IS NOT NULL
@@ -69,8 +102,8 @@ const listPendingApprovalPostsStmt = db.prepare(`
 `);
 
 const createPostStmt = db.prepare(`
-  INSERT INTO posts (content, status, posted_at, error)
-  VALUES (@content, @status, @posted_at, @error)
+  INSERT INTO posts (content, status, posted_at, error, source_pipeline, source_reference)
+  VALUES (@content, @status, @posted_at, @error, @source_pipeline, @source_reference)
 `);
 
 const updatePostStmt = db.prepare(`
@@ -81,7 +114,9 @@ const updatePostStmt = db.prepare(`
       error = @error,
       approval_email_message_id = @approval_email_message_id,
       approval_requested_at = @approval_requested_at,
-      email_approved_at = @email_approved_at
+      email_approved_at = @email_approved_at,
+      source_pipeline = @source_pipeline,
+      source_reference = @source_reference
   WHERE id = @id
 `);
 
@@ -124,8 +159,61 @@ const markFailedStmt = db.prepare(`
   WHERE id = ?
 `);
 
-function addPost(content) {
-  return addPostStmt.run(content);
+const latestPostStmt = db.prepare(`
+  SELECT id, content, status, posted_at, error, created_at,
+         approval_email_message_id, approval_requested_at, email_approved_at,
+         source_pipeline, source_reference
+  FROM posts
+  ORDER BY id DESC
+  LIMIT 1
+`);
+
+const postBySourceReferenceStmt = db.prepare(`
+  SELECT id, content, status, posted_at, error, created_at,
+         approval_email_message_id, approval_requested_at, email_approved_at,
+         source_pipeline, source_reference
+  FROM posts
+  WHERE source_pipeline = ? AND source_reference = ?
+  ORDER BY id DESC
+  LIMIT 1
+`);
+
+const recentPostContentsStmt = db.prepare(`
+  SELECT content
+  FROM posts
+  ORDER BY id DESC
+  LIMIT ?
+`);
+
+const latestWebContextBySourceStmt = db.prepare(`
+  SELECT id, source_url, fetched_date, fetched_at, content
+  FROM web_context_cache
+  WHERE source_url = ?
+  ORDER BY fetched_at DESC
+  LIMIT 1
+`);
+
+const webContextBySourceAndDateStmt = db.prepare(`
+  SELECT id, source_url, fetched_date, fetched_at, content
+  FROM web_context_cache
+  WHERE source_url = ? AND fetched_date = ?
+  ORDER BY fetched_at DESC
+  LIMIT 1
+`);
+
+const upsertWebContextStmt = db.prepare(`
+  INSERT INTO web_context_cache (source_url, fetched_date, content)
+  VALUES (@source_url, @fetched_date, @content)
+  ON CONFLICT(source_url, fetched_date)
+  DO UPDATE SET content = excluded.content, fetched_at = CURRENT_TIMESTAMP
+`);
+
+function addPost(content, options = {}) {
+  return addPostStmt.run({
+    content,
+    source_pipeline: options.sourcePipeline || null,
+    source_reference: options.sourceReference || null,
+  });
 }
 
 function getNextPendingPost() {
@@ -158,6 +246,8 @@ function normalizePostInput(input) {
     approval_email_message_id: input.approval_email_message_id || null,
     approval_requested_at: input.approval_requested_at || null,
     email_approved_at: input.email_approved_at || null,
+    source_pipeline: input.source_pipeline ? String(input.source_pipeline) : null,
+    source_reference: input.source_reference ? String(input.source_reference) : null,
   };
 }
 
@@ -182,6 +272,11 @@ function updatePost(id, input) {
     status: input.status ?? existing.status,
     posted_at: Object.prototype.hasOwnProperty.call(input, "posted_at") ? input.posted_at : existing.posted_at,
     error: Object.prototype.hasOwnProperty.call(input, "error") ? input.error : existing.error,
+    approval_email_message_id: input.approval_email_message_id ?? existing.approval_email_message_id,
+    approval_requested_at: input.approval_requested_at ?? existing.approval_requested_at,
+    email_approved_at: input.email_approved_at ?? existing.email_approved_at,
+    source_pipeline: Object.prototype.hasOwnProperty.call(input, "source_pipeline") ? input.source_pipeline : existing.source_pipeline,
+    source_reference: Object.prototype.hasOwnProperty.call(input, "source_reference") ? input.source_reference : existing.source_reference,
   });
 
   updatePostStmt.run({ id, ...post });
@@ -215,19 +310,82 @@ function clearApprovalState(id) {
   return clearApprovalStateStmt.run(id);
 }
 
+function getLatestPost() {
+  return latestPostStmt.get() || null;
+}
+
+function getPostBySourceReference(sourcePipeline, sourceReference) {
+  if (!sourcePipeline || !sourceReference) {
+    return null;
+  }
+  return postBySourceReferenceStmt.get(sourcePipeline, sourceReference) || null;
+}
+
+function listRecentPostContents(limit = 25) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 100));
+  return recentPostContentsStmt.all(safeLimit).map((row) => row.content).filter(Boolean);
+}
+
+function getLatestWebContextBySource(sourceUrl) {
+  return latestWebContextBySourceStmt.get(sourceUrl) || null;
+}
+
+function getWebContextBySourceAndDate(sourceUrl, fetchedDate) {
+  return webContextBySourceAndDateStmt.get(sourceUrl, fetchedDate) || null;
+}
+
+const getSettingStmt = db.prepare("SELECT value FROM settings WHERE key = ?");
+const setSettingStmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+
+function getSetting(key, defaultValue = null) {
+  const row = getSettingStmt.get(key);
+  return row ? row.value : defaultValue;
+}
+
+function setSetting(key, value) {
+  setSettingStmt.run(key, String(value));
+}
+
+function upsertWebContext(input) {
+  const sourceUrl = String(input.source_url || "").trim();
+  const fetchedDate = String(input.fetched_date || "").trim();
+  const content = String(input.content || "").trim();
+
+  if (!sourceUrl) {
+    throw new Error("source_url is required for web context cache.");
+  }
+  if (!fetchedDate) {
+    throw new Error("fetched_date is required for web context cache.");
+  }
+  if (!content) {
+    throw new Error("content is required for web context cache.");
+  }
+
+  upsertWebContextStmt.run({ source_url: sourceUrl, fetched_date: fetchedDate, content });
+  return getWebContextBySourceAndDate(sourceUrl, fetchedDate);
+}
+
 module.exports = {
   db,
   addPost,
+  getSetting,
+  setSetting,
   clearApprovalState,
   createPost,
   deletePost,
   getNextPendingPost,
+  getLatestPost,
+  getPostBySourceReference,
+  getLatestWebContextBySource,
+  getWebContextBySourceAndDate,
   getPostById,
   listPosts,
+  listRecentPostContents,
   listPendingApprovalPosts,
   markApprovalEmailSent,
   markEmailApproved,
   markPosted,
   markFailed,
+  upsertWebContext,
   updatePost,
 };

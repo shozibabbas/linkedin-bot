@@ -62,8 +62,15 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [postingMode, setPostingMode] = useState("confirm_email");
+  const [modeLoading, setModeLoading] = useState(false);
+  const [modeSaved, setModeSaved] = useState(false);
+  const [pipelines, setPipelines] = useState([]);
+  const [pipelineLoadingKey, setPipelineLoadingKey] = useState("");
+  const [pipelineGeneratingKey, setPipelineGeneratingKey] = useState("");
 
   async function loadPosts() {
     setLoading(true);
@@ -78,14 +85,29 @@ export default function App() {
     }
   }
 
+  async function loadSettings() {
+    try {
+      const [settingsData, pipelinesData] = await Promise.all([
+        apiRequest("/api/settings"),
+        apiRequest("/api/pipelines"),
+      ]);
+      setPostingMode(settingsData.settings.posting_mode);
+      setPipelines(pipelinesData.pipelines);
+    } catch (_) {
+      // non-critical, keep default
+    }
+  }
+
   useEffect(() => {
     loadPosts();
+    loadSettings();
   }, []);
 
   function startCreate() {
     setEditingId(null);
     setForm(emptyForm);
     setError("");
+    setNotice("");
   }
 
   function startEdit(post) {
@@ -97,6 +119,7 @@ export default function App() {
       error: post.error || "",
     });
     setError("");
+    setNotice("");
   }
 
   function handleChange(event) {
@@ -108,6 +131,7 @@ export default function App() {
     event.preventDefault();
     setSaving(true);
     setError("");
+    setNotice("");
 
     const body = {
       content: form.content,
@@ -145,6 +169,7 @@ export default function App() {
     }
 
     setError("");
+    setNotice("");
     try {
       await apiRequest(`/api/posts/${id}`, { method: "DELETE" });
       await loadPosts();
@@ -153,6 +178,70 @@ export default function App() {
       }
     } catch (requestError) {
       setError(requestError.message);
+    }
+  }
+
+  async function handleGeneratePipeline(pipelineKey) {
+    setPipelineGeneratingKey(pipelineKey);
+    setError("");
+    setNotice("");
+
+    try {
+      const data = await apiRequest("/api/posts/generate", {
+        method: "POST",
+        body: JSON.stringify({ pipeline: pipelineKey }),
+      });
+
+      if (!data.post) {
+        setNotice("That pipeline had no fresh content to generate right now.");
+        return;
+      }
+
+      setNotice(`Generated a new post from ${pipelines.find((pipeline) => pipeline.key === pipelineKey)?.name || pipelineKey}.`);
+      await loadPosts();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setPipelineGeneratingKey("");
+    }
+  }
+
+  async function handleModeChange(mode) {
+    setPostingMode(mode);
+    setModeLoading(true);
+    setModeSaved(false);
+    setError("");
+    setNotice("");
+    try {
+      await apiRequest("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ posting_mode: mode }),
+      });
+      setModeSaved(true);
+      setTimeout(() => setModeSaved(false), 2000);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setModeLoading(false);
+    }
+  }
+
+  async function handlePipelineToggle(pipelineKey, enabled) {
+    setPipelineLoadingKey(pipelineKey);
+    setError("");
+    setNotice("");
+
+    try {
+      const data = await apiRequest(`/api/pipelines/${pipelineKey}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      });
+      setPipelines((current) => current.map((pipeline) => (pipeline.key === pipelineKey ? data.pipeline : pipeline)));
+    } catch (requestError) {
+      setError(requestError.message);
+      await loadSettings();
+    } finally {
+      setPipelineLoadingKey("");
     }
   }
 
@@ -184,11 +273,120 @@ export default function App() {
         </div>
       </header>
 
+      <section className="panel settings-panel">
+        <div className="panel-head">
+          <h2>Automation</h2>
+          {modeLoading ? <span className="muted">Saving...</span> : null}
+          {modeSaved ? <span className="saved-confirm">Saved</span> : null}
+        </div>
+        <div className="settings-stack">
+          <div>
+            <h3 className="settings-subtitle">Posting Mode</h3>
+            <p className="muted settings-copy">This applies to every enabled pipeline.</p>
+          </div>
+        <div className="mode-options">
+          <label className={`mode-option${postingMode === "confirm_email" ? " mode-option--active" : ""}`}>
+            <input
+              type="radio"
+              name="posting_mode"
+              value="confirm_email"
+              checked={postingMode === "confirm_email"}
+              onChange={() => handleModeChange("confirm_email")}
+            />
+            <div>
+              <strong>Email confirmation</strong>
+              <p>When a pipeline creates a post, it emails you for approval. Posting waits for your email reply.</p>
+            </div>
+          </label>
+          <label className={`mode-option${postingMode === "confirm_push" ? " mode-option--active" : ""}`}>
+            <input
+              type="radio"
+              name="posting_mode"
+              value="confirm_push"
+              checked={postingMode === "confirm_push"}
+              onChange={() => handleModeChange("confirm_push")}
+            />
+            <div>
+              <strong>Push notification confirmation</strong>
+              <p>When a pipeline creates a post, it sends a Mac push notification. Click it to approve and post.</p>
+            </div>
+          </label>
+          <label className={`mode-option${postingMode === "auto" ? " mode-option--active" : ""}`}>
+            <input
+              type="radio"
+              name="posting_mode"
+              value="auto"
+              checked={postingMode === "auto"}
+              onChange={() => handleModeChange("auto")}
+            />
+            <div>
+              <strong>Fully automatic</strong>
+              <p>No confirmation needed. Each pipeline posts immediately when its cron run produces content, then emails you the result.</p>
+            </div>
+          </label>
+        </div>
+
+          <div className="pipelines-head">
+            <div>
+              <h3 className="settings-subtitle">Content Pipelines</h3>
+              <p className="muted settings-copy">Turn pipelines on or off independently. Disabled pipelines stay visible in the portal but stop generating scheduled content.</p>
+            </div>
+          </div>
+
+          <div className="pipeline-list">
+            {pipelines.map((pipeline) => {
+              const isBusy = pipelineLoadingKey === pipeline.key;
+              const isGenerating = pipelineGeneratingKey === pipeline.key;
+
+              return (
+                <article key={pipeline.key} className={`pipeline-card${pipeline.enabled ? " pipeline-card--enabled" : ""}`}>
+                  <div className="pipeline-card__top">
+                    <div>
+                      <h4>{pipeline.name}</h4>
+                      <p>{pipeline.description}</p>
+                    </div>
+                    <label className="switch-row">
+                      <span>{pipeline.enabled ? "On" : "Off"}</span>
+                      <input
+                        type="checkbox"
+                        checked={pipeline.enabled}
+                        onChange={(event) => handlePipelineToggle(pipeline.key, event.target.checked)}
+                        disabled={isBusy}
+                      />
+                    </label>
+                  </div>
+                  <div className="pipeline-card__meta">
+                    <span className="badge badge-pipeline">{pipeline.cadenceLabel}</span>
+                    <span className="muted">Cron: {pipeline.cron}</span>
+                  </div>
+                  <div className="pipeline-card__actions">
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => handleGeneratePipeline(pipeline.key)}
+                      disabled={isGenerating}
+                    >
+                      {isGenerating ? "Generating..." : "Generate now"}
+                    </button>
+                    {isBusy ? <span className="muted">Saving...</span> : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
       <main className="layout">
         <section className="panel form-panel">
           <div className="panel-head">
             <h2>{editingId === null ? "Create post" : `Edit post #${editingId}`}</h2>
-            <button type="button" className="ghost-button" onClick={startCreate}>New</button>
+            <div className="post-actions">
+              <button type="button" className="ghost-button" onClick={startCreate}>New</button>
+              <button type="button" className="primary-button" onClick={() => handleGeneratePipeline("work_context")} disabled={pipelineGeneratingKey === "work_context" || saving}>
+                {pipelineGeneratingKey === "work_context" ? "Generating..." : "Generate Work Context Content"}
+              </button>
+            </div>
           </div>
 
           <form onSubmit={handleSubmit} className="editor">
@@ -237,6 +435,7 @@ export default function App() {
             </label>
 
             {error ? <p className="error-banner">{error}</p> : null}
+            {notice ? <p className="notice-banner">{notice}</p> : null}
 
             <button type="submit" className="primary-button" disabled={saving}>
               {saving ? "Saving..." : editingId === null ? "Create post" : "Save changes"}
@@ -258,6 +457,7 @@ export default function App() {
               <article key={post.id} className="post-card">
                 <div className="post-meta">
                   <span className={`badge badge-${post.status}`}>{post.status}</span>
+                  {post.source_pipeline ? <span className="badge badge-pipeline">{post.source_pipeline.replace(/_/g, " ")}</span> : null}
                   <span>#{post.id}</span>
                   <span>Created {formatTimestamp(post.created_at)}</span>
                 </div>
@@ -270,6 +470,10 @@ export default function App() {
                   <div>
                     <dt>Error</dt>
                     <dd>{post.error || "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Pipeline</dt>
+                    <dd>{post.source_pipeline || "manual"}</dd>
                   </div>
                 </dl>
                 <div className="post-actions">
