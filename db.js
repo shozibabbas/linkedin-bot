@@ -35,6 +35,20 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS daily_schedule_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day_key TEXT NOT NULL UNIQUE,
+    scheduled_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    posts_requested INTEGER NOT NULL,
+    interval_minutes INTEGER NOT NULL,
+    pipelines_json TEXT NOT NULL,
+    auto_without_confirmation INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    details TEXT
+  );
+`);
+
 const existingColumns = db.prepare("PRAGMA table_info(posts)").all().map((column) => column.name);
 
 if (!existingColumns.includes("approval_email_message_id")) {
@@ -208,6 +222,44 @@ const upsertWebContextStmt = db.prepare(`
   DO UPDATE SET content = excluded.content, fetched_at = CURRENT_TIMESTAMP
 `);
 
+const dailyRunByDayStmt = db.prepare(`
+  SELECT id, day_key, scheduled_at, posts_requested, interval_minutes,
+         pipelines_json, auto_without_confirmation, status, details
+  FROM daily_schedule_runs
+  WHERE day_key = ?
+  LIMIT 1
+`);
+
+const upsertDailyRunStmt = db.prepare(`
+  INSERT INTO daily_schedule_runs (
+    day_key,
+    posts_requested,
+    interval_minutes,
+    pipelines_json,
+    auto_without_confirmation,
+    status,
+    details
+  )
+  VALUES (
+    @day_key,
+    @posts_requested,
+    @interval_minutes,
+    @pipelines_json,
+    @auto_without_confirmation,
+    @status,
+    @details
+  )
+  ON CONFLICT(day_key)
+  DO UPDATE SET
+    scheduled_at = CURRENT_TIMESTAMP,
+    posts_requested = excluded.posts_requested,
+    interval_minutes = excluded.interval_minutes,
+    pipelines_json = excluded.pipelines_json,
+    auto_without_confirmation = excluded.auto_without_confirmation,
+    status = excluded.status,
+    details = excluded.details
+`);
+
 function addPost(content, options = {}) {
   return addPostStmt.run({
     content,
@@ -365,11 +417,43 @@ function upsertWebContext(input) {
   return getWebContextBySourceAndDate(sourceUrl, fetchedDate);
 }
 
+function getDailyScheduleRunByDay(dayKey) {
+  return dailyRunByDayStmt.get(String(dayKey || "").trim()) || null;
+}
+
+function upsertDailyScheduleRun(input) {
+  const dayKey = String(input.day_key || "").trim();
+  if (!dayKey) {
+    throw new Error("day_key is required for daily schedule run.");
+  }
+
+  const postsRequested = Math.max(1, Number(input.posts_requested) || 1);
+  const intervalMinutes = Math.max(1, Number(input.interval_minutes) || 1);
+  const pipelinesJson = String(input.pipelines_json || "[]");
+  const autoWithoutConfirmation = input.auto_without_confirmation ? 1 : 0;
+  const status = String(input.status || "scheduled").trim();
+  const details = input.details == null ? null : String(input.details);
+
+  upsertDailyRunStmt.run({
+    day_key: dayKey,
+    posts_requested: postsRequested,
+    interval_minutes: intervalMinutes,
+    pipelines_json: pipelinesJson,
+    auto_without_confirmation: autoWithoutConfirmation,
+    status,
+    details,
+  });
+
+  return getDailyScheduleRunByDay(dayKey);
+}
+
 module.exports = {
   db,
   addPost,
   getSetting,
   setSetting,
+  getDailyScheduleRunByDay,
+  upsertDailyScheduleRun,
   clearApprovalState,
   createPost,
   deletePost,

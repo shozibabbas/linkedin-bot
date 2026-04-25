@@ -71,6 +71,17 @@ export default function App() {
   const [pipelines, setPipelines] = useState([]);
   const [pipelineLoadingKey, setPipelineLoadingKey] = useState("");
   const [pipelineGeneratingKey, setPipelineGeneratingKey] = useState("");
+  const [dailySaving, setDailySaving] = useState(false);
+  const [dailyRunLoading, setDailyRunLoading] = useState(false);
+  const [dailyWizard, setDailyWizard] = useState({
+    enabled: false,
+    defaultPostsPerDay: 4,
+    autoWithoutConfirmation: false,
+    generationPipelineKeys: ["work_context"],
+    continuePipelineKeys: [],
+    remainingMinutesBeforeEndOfDay: 0,
+    todayRun: null,
+  });
 
   async function loadPosts() {
     setLoading(true);
@@ -87,12 +98,14 @@ export default function App() {
 
   async function loadSettings() {
     try {
-      const [settingsData, pipelinesData] = await Promise.all([
+      const [settingsData, pipelinesData, dailyData] = await Promise.all([
         apiRequest("/api/settings"),
         apiRequest("/api/pipelines"),
+        apiRequest("/api/daily-scheduler"),
       ]);
       setPostingMode(settingsData.settings.posting_mode);
       setPipelines(pipelinesData.pipelines);
+      setDailyWizard((current) => ({ ...current, ...dailyData.dailyScheduler }));
     } catch (_) {
       // non-critical, keep default
     }
@@ -245,9 +258,75 @@ export default function App() {
     }
   }
 
+  function updateDailyWizardField(key, value) {
+    setDailyWizard((current) => ({ ...current, [key]: value }));
+  }
+
+  function togglePipelineKeyInField(field, key, checked) {
+    setDailyWizard((current) => {
+      const currentValues = Array.isArray(current[field]) ? current[field] : [];
+      const nextValues = checked ? [...new Set([...currentValues, key])] : currentValues.filter((entry) => entry !== key);
+      return { ...current, [field]: nextValues };
+    });
+  }
+
+  async function saveDailySchedulerSettings() {
+    setDailySaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const data = await apiRequest("/api/daily-scheduler", {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: dailyWizard.enabled,
+          defaultPostsPerDay: dailyWizard.defaultPostsPerDay,
+          autoWithoutConfirmation: dailyWizard.autoWithoutConfirmation,
+          generationPipelineKeys: dailyWizard.generationPipelineKeys,
+          continuePipelineKeys: dailyWizard.continuePipelineKeys,
+        }),
+      });
+      setDailyWizard((current) => ({ ...current, ...data.dailyScheduler }));
+      setNotice("Daily scheduler settings saved.");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setDailySaving(false);
+    }
+  }
+
+  async function runDailyWizardNow() {
+    setDailyRunLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      const data = await apiRequest("/api/daily-scheduler/run", {
+        method: "POST",
+        body: JSON.stringify({
+          postsPerDay: dailyWizard.defaultPostsPerDay,
+          autoWithoutConfirmation: dailyWizard.autoWithoutConfirmation,
+          pipelineKeys: dailyWizard.generationPipelineKeys,
+          saveAsDefaults: true,
+        }),
+      });
+      const scheduledCount = data.result?.scheduled?.length || 0;
+      setNotice(`Daily wizard scheduled ${scheduledCount} posts for today.`);
+      await Promise.all([loadPosts(), loadSettings()]);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setDailyRunLoading(false);
+    }
+  }
+
   const pendingCount = posts.filter((post) => post.status === "pending").length;
   const postedCount = posts.filter((post) => post.status === "posted").length;
   const failedCount = posts.filter((post) => post.status === "failed").length;
+  const calculatedIntervalMinutes = dailyWizard.defaultPostsPerDay <= 1
+    ? 0
+    : Math.max(
+      1,
+      Math.floor(Math.max(0, (dailyWizard.remainingMinutesBeforeEndOfDay || 0) - 2) / (dailyWizard.defaultPostsPerDay - 1))
+    );
 
   return (
     <div className="shell">
@@ -373,6 +452,101 @@ export default function App() {
                 </article>
               );
             })}
+          </div>
+
+          <div className="pipelines-head">
+            <div>
+              <h3 className="settings-subtitle">Daily Scheduler Wizard</h3>
+              <p className="muted settings-copy">Schedule all remaining posts for today in one run. This stores your defaults and can auto-run daily without confirmation.</p>
+            </div>
+          </div>
+
+          <div className="wizard-panel">
+            <label className="switch-row">
+              <span>Enable daily scheduler wizard mode</span>
+              <input
+                type="checkbox"
+                checked={dailyWizard.enabled}
+                onChange={(event) => updateDailyWizardField("enabled", event.target.checked)}
+              />
+            </label>
+
+            <label className="switch-row">
+              <span>Auto post daily without confirmation</span>
+              <input
+                type="checkbox"
+                checked={dailyWizard.autoWithoutConfirmation}
+                onChange={(event) => updateDailyWizardField("autoWithoutConfirmation", event.target.checked)}
+              />
+            </label>
+
+            <div className="form-grid">
+              <label>
+                Posts per day
+                <input
+                  type="number"
+                  min="1"
+                  max="24"
+                  value={dailyWizard.defaultPostsPerDay}
+                  onChange={(event) => updateDailyWizardField("defaultPostsPerDay", Number(event.target.value) || 1)}
+                />
+              </label>
+
+              <label>
+                Calculated interval between posts (minutes)
+                <input
+                  type="number"
+                  value={calculatedIntervalMinutes}
+                  disabled
+                />
+              </label>
+            </div>
+
+            <div>
+              <p className="muted wizard-label">Pipelines to use when generating daily posts:</p>
+              <div className="wizard-pipeline-grid">
+                {pipelines.map((pipeline) => (
+                  <label key={`daily-gen-${pipeline.key}`} className="switch-row wizard-pipeline-row">
+                    <span>{pipeline.name}</span>
+                    <input
+                      type="checkbox"
+                      checked={dailyWizard.generationPipelineKeys.includes(pipeline.key)}
+                      onChange={(event) => togglePipelineKeyInField("generationPipelineKeys", pipeline.key, event.target.checked)}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="muted wizard-label">If daily auto mode already scheduled today, still allow these regular pipelines:</p>
+              <div className="wizard-pipeline-grid">
+                {pipelines.map((pipeline) => (
+                  <label key={`daily-continue-${pipeline.key}`} className="switch-row wizard-pipeline-row">
+                    <span>{pipeline.name}</span>
+                    <input
+                      type="checkbox"
+                      checked={dailyWizard.continuePipelineKeys.includes(pipeline.key)}
+                      onChange={(event) => togglePipelineKeyInField("continuePipelineKeys", pipeline.key, event.target.checked)}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <p className="muted">
+              Remaining minutes before end of day: {dailyWizard.remainingMinutesBeforeEndOfDay || 0}
+              {dailyWizard.todayRun?.status === "scheduled" ? " | Today's posts are already scheduled." : " | Today's posts are not fully scheduled yet."}
+            </p>
+
+            <div className="post-actions">
+              <button type="button" className="ghost-button" onClick={saveDailySchedulerSettings} disabled={dailySaving || dailyRunLoading}>
+                {dailySaving ? "Saving..." : "Save Daily Wizard Settings"}
+              </button>
+              <button type="button" className="primary-button" onClick={runDailyWizardNow} disabled={dailyRunLoading || dailySaving}>
+                {dailyRunLoading ? "Scheduling..." : "Schedule Whole Day Now"}
+              </button>
+            </div>
           </div>
         </div>
       </section>

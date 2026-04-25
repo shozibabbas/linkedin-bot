@@ -3,6 +3,13 @@ const dotenv = require("dotenv");
 const express = require("express");
 
 const { createPost, deletePost, getPostById, listPosts, updatePost, getSetting, setSetting } = require("./db");
+const {
+  getDailySchedulerSettings,
+  getRemainingMinutesBeforeEndOfDay,
+  getTodayDailyScheduleRun,
+  scheduleWholeDayPosts,
+  updateDailySchedulerSettings,
+} = require("./daily-scheduling");
 const { getPipelineDefinition, listPipelineDefinitions, toPipelineMetadata } = require("./pipelines");
 
 dotenv.config();
@@ -56,6 +63,18 @@ function createApp() {
     res.json({ pipelines: listPipelinesWithSettings() });
   });
 
+  app.get("/api/daily-scheduler", (_req, res) => {
+    const settings = getDailySchedulerSettings();
+    const todayRun = getTodayDailyScheduleRun(new Date());
+    res.json({
+      dailyScheduler: {
+        ...settings,
+        remainingMinutesBeforeEndOfDay: getRemainingMinutesBeforeEndOfDay(new Date()),
+        todayRun,
+      },
+    });
+  });
+
   app.put("/api/settings", (req, res) => {
     const { posting_mode } = req.body || {};
     const valid = ["confirm_email", "confirm_push", "auto"];
@@ -82,6 +101,39 @@ function createApp() {
 
     setSetting(pipeline.settingKey, enabled ? "true" : "false");
     res.json({ pipeline: toPipelineMetadata(pipeline, enabled) });
+  });
+
+  app.put("/api/daily-scheduler", (req, res) => {
+    try {
+      const body = req.body || {};
+      const updated = updateDailySchedulerSettings({
+        enabled: body.enabled,
+        defaultPostsPerDay: body.defaultPostsPerDay,
+        autoWithoutConfirmation: body.autoWithoutConfirmation,
+        generationPipelineKeys: body.generationPipelineKeys,
+        continuePipelineKeys: body.continuePipelineKeys,
+      });
+      res.json({ dailyScheduler: updated });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Failed to update daily scheduler settings." });
+    }
+  });
+
+  app.post("/api/daily-scheduler/run", async (req, res) => {
+    try {
+      const body = req.body || {};
+      const result = await scheduleWholeDayPosts({
+        postsPerDay: body.postsPerDay,
+        autoWithoutConfirmation: body.autoWithoutConfirmation,
+        pipelineKeys: body.pipelineKeys,
+        saveAsDefaults: body.saveAsDefaults !== false,
+        force: Boolean(body.force),
+      });
+
+      res.json({ result });
+    } catch (error) {
+      res.status(500).json({ error: error.message || "Failed to run daily scheduling wizard." });
+    }
   });
 
   app.post("/api/posts/generate", async (req, res) => {

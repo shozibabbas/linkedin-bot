@@ -22,8 +22,11 @@ async function humanPause(page, minMs = 500, maxMs = 1500) {
   await page.waitForTimeout(randomBetween(minMs, maxMs));
 }
 
-function getScheduledDateTime(minutesAhead = 15) {
-  const target = new Date(Date.now() + minutesAhead * 60 * 1000);
+function getScheduledDateTime(minutesAhead = 15, dateInput = null) {
+  const target = dateInput ? new Date(dateInput) : new Date(Date.now() + minutesAhead * 60 * 1000);
+  if (Number.isNaN(target.getTime())) {
+    throw new Error("Invalid schedule date/time provided.");
+  }
   target.setSeconds(0, 0);
 
   const yyyy = target.getFullYear();
@@ -36,7 +39,30 @@ function getScheduledDateTime(minutesAhead = 15) {
     dateValue: `${yyyy}-${mm}-${dd}`,
     timeValue: `${hh}:${min}`,
     humanValue: target.toLocaleString(),
+    target,
   };
+}
+
+function normalizeExplicitScheduleAt(dateInput) {
+  if (!dateInput) {
+    return null;
+  }
+
+  const requested = new Date(dateInput);
+  if (Number.isNaN(requested.getTime())) {
+    throw new Error("Invalid scheduleAt option provided to posting flow.");
+  }
+
+  const now = new Date();
+  const diffMinutes = (requested.getTime() - now.getTime()) / 60000;
+  if (diffMinutes <= 10) {
+    // LinkedIn scheduling can fail for near-immediate timestamps. Push it past 15 minutes.
+    const adjusted = new Date(now.getTime() + 16 * 60000);
+    adjusted.setSeconds(0, 0);
+    return adjusted;
+  }
+
+  return requested;
 }
 
 function toAppleScriptString(value) {
@@ -250,7 +276,7 @@ async function clickSchedulePost(page, composeDialog) {
   throw new Error("Could not find LinkedIn schedule controls in composer.");
 }
 
-async function ensureComposerHasContent(page, composeDialog, expectedContent) {
+async function ensureComposerHasContent(page, composeDialog, expectedContent, options = {}) {
   const activeDialog = composeDialog || (await waitForComposerDialog(page));
   const editor = await getComposerEditor(activeDialog);
   const currentText = (await editor.innerText()).trim();
@@ -259,8 +285,10 @@ async function ensureComposerHasContent(page, composeDialog, expectedContent) {
   }
 
   await editor.click();
-  await humanPause(page, 400, 900);
-  await page.keyboard.type(expectedContent, { delay: randomBetween(15, 45) });
+  if (!options.fastMode) {
+    await humanPause(page, 400, 900);
+  }
+  await page.keyboard.type(expectedContent, { delay: options.fastMode ? 0 : randomBetween(15, 45) });
 }
 
 async function waitForComposerDialog(page, timeoutMs = 20000) {
@@ -367,8 +395,8 @@ async function getComposerEditor(composeDialog) {
   throw new Error("Could not find LinkedIn post editor after opening composer.");
 }
 
-async function schedulePostForLater(page, post, composeDialog) {
-  const scheduleAt = getScheduledDateTime(15);
+async function schedulePostForLater(page, post, composeDialog, scheduleAtInput = null, options = {}) {
+  const scheduleAt = getScheduledDateTime(15, scheduleAtInput);
 
   await clickSchedulePost(page, composeDialog);
   await humanPause(page, 500, 1200);
@@ -383,8 +411,7 @@ async function schedulePostForLater(page, post, composeDialog) {
 
   if ((await dateInputById.count()) && (await timeInputById.count())) {
     // LinkedIn expects mm/dd/yyyy in this variant.
-    const target = new Date(Date.now() + 15 * 60 * 1000);
-    target.setSeconds(0, 0);
+    const target = scheduleAt.target;
     const dateText = `${String(target.getMonth() + 1).padStart(2, "0")}/${String(target.getDate()).padStart(2, "0")}/${target.getFullYear()}`;
     const timeText = `${String(target.getHours()).padStart(2, "0")}:${String(target.getMinutes()).padStart(2, "0")}`;
 
@@ -463,7 +490,7 @@ async function schedulePostForLater(page, post, composeDialog) {
   // After Next, LinkedIn returns to the main composer view. Enter the body here,
   // because the scheduled date/time step can wipe previously entered content.
   const composerDialogAfterNext = await waitForComposerDialog(page);
-  await ensureComposerHasContent(page, composerDialogAfterNext, post.content);
+  await ensureComposerHasContent(page, composerDialogAfterNext, post.content, options);
 
   let scheduleBtn = composerDialogAfterNext
     .locator(".share-creation-state__footer button.share-actions__primary-action, .share-box-footer button.share-actions__primary-action")
@@ -504,6 +531,9 @@ async function runPostingFlow(postInput, options = {}) {
   const post = postInput || getNextPendingPost();
   const skipApproval = Boolean(options.skipApproval);
   const sendResultEmail = options.sendResultEmail !== false;
+  const fastMode = Boolean(options.fastMode);
+  const explicitScheduleAt = normalizeExplicitScheduleAt(options.scheduleAt || null);
+  const scheduleLabel = explicitScheduleAt ? getScheduledDateTime(15, explicitScheduleAt).humanValue : "15 minutes later";
   const maxAttempts = 3;
 
   if (!post) {
@@ -532,7 +562,7 @@ async function runPostingFlow(postInput, options = {}) {
 
     let browser;
     try {
-      browser = await chromium.launch({ headless: false, slowMo: randomBetween(60, 120) });
+      browser = await chromium.launch({ headless: false, slowMo: fastMode ? 0 : randomBetween(60, 120) });
       const context = await browser.newContext({ storageState: AUTH_PATH });
       const page = await context.newPage();
 
@@ -540,7 +570,9 @@ async function runPostingFlow(postInput, options = {}) {
       console.log("[post] Navigating to feed...");
       await page.goto("https://www.linkedin.com/feed/", { waitUntil: "domcontentloaded", timeout: 60000 });
 
-      await humanPause(page, 1200, 2200);
+      if (!fastMode) {
+        await humanPause(page, 1200, 2200);
+      }
 
       if (/linkedin\.com\/login/i.test(page.url())) {
         throw new Error("LinkedIn session expired. Please run login.js again.");
@@ -569,16 +601,16 @@ async function runPostingFlow(postInput, options = {}) {
         const approvedToSchedule = await requestApproval(
           page,
           "LinkedIn Bot: Schedule Post",
-          `Schedule post #${post.id} for 15 minutes later?\n\n${post.content.slice(0, 1000)}`
+          `Schedule post #${post.id} for ${scheduleLabel}?\n\n${post.content.slice(0, 1000)}`
         );
         if (!approvedToSchedule) {
           throw new Error("User canceled before scheduling.");
         }
       } else {
-        console.log(`[post] Email approval detected for post #${post.id}. Skipping local scheduling confirmation.`);
+        console.log(`[post] Approval bypass enabled for post #${post.id}. Skipping local scheduling confirmation.`);
       }
 
-      await schedulePostForLater(page, post, composeDialog);
+      await schedulePostForLater(page, post, composeDialog, explicitScheduleAt, { fastMode });
       markPosted(post.id);
 
       console.log(`[post] Post #${post.id} submitted to LinkedIn scheduler successfully.`);
