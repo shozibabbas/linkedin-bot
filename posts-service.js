@@ -181,6 +181,10 @@ Hard rules:
 - Include 3–5 relevant hashtags at the end
 - No emojis anywhere in the post
 - Suitable for a professional LinkedIn audience
+- Use short paragraphs with visible line breaks between ideas
+- Never return the full post as one single dense paragraph
+- When using a list, put each list item on its own line
+- Leave a blank line before the final hashtag block
 - Do NOT open with any of these overused phrases:
 ${forbiddenList}
 - Do NOT use generic filler phrases like "game-changer", "dive deep", "unpack", "leverage", "synergies", "paradigm shift", or "in today's landscape"

@@ -4,3 +4,6 @@ auth.json
 posts.db
 *.log
 .DS_Store
+dist/**
+dist-app/**
+.gitignore
