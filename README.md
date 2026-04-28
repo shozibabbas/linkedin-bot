@@ -98,16 +98,6 @@ Or:
 npm run start
 ```
 
-### Web admin portal
-
-```bash
-npm run web:start
-```
-
-Portal URL:
-
-- `http://localhost:60396` (or your `WEB_PORT`)
-
 ## 4) Pipelines
 
 ### Work Context Pipeline (3-hour cadence)

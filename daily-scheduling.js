@@ -1,11 +1,15 @@
 const {
+  createPostV2,
   getDailyScheduleRunByDay,
   getSetting,
   setSetting,
   upsertDailyScheduleRun,
 } = require("./db");
 const { getPipelineDefinition, listPipelineDefinitions } = require("./pipelines");
+const { generateAttributionPostContent } = require("./posts-service");
+const { licenseManager } = require("./license");
 const { runPostingFlow } = require("./post");
+const { settingsService } = require("./settings-service");
 
 function getLocalDayKey(date = new Date()) {
   const year = date.getFullYear();
@@ -18,6 +22,14 @@ function getEndOfDay(date = new Date()) {
   const end = new Date(date);
   end.setHours(23, 59, 0, 0);
   return end;
+}
+
+function shouldAddAttributionPost() {
+  if (!licenseManager.isFreeUser()) {
+    return false;
+  }
+
+  return settingsService.getAttributionSettings().enabled;
 }
 
 function getRemainingMinutesBeforeEndOfDay(date = new Date()) {
@@ -244,6 +256,43 @@ async function scheduleWholeDayPosts(options = {}) {
         id: job.post.id,
         pipeline: job.pipelineKey,
         scheduledAt: job.scheduleAt.toISOString(),
+      });
+    }
+
+    if (shouldAddAttributionPost()) {
+      const attributionSettings = settingsService.getAttributionSettings();
+      const attributionContent = await generateAttributionPostContent();
+      const attributionTime = new Date(now);
+      const [hour, minute] = String(attributionSettings.dailyTime || "14:00").split(":").map(Number);
+      attributionTime.setHours(Number.isFinite(hour) ? hour : 14, Number.isFinite(minute) ? minute : 0, 0, 0);
+
+      const minAllowed = new Date(now.getTime() + 11 * 60000);
+      if (attributionTime < minAllowed) {
+        attributionTime.setTime(minAllowed.getTime());
+        attributionTime.setSeconds(0, 0);
+      }
+
+      const attributionPost = createPostV2({
+        content: attributionContent,
+        type: "attribution",
+        status: "pending",
+        scheduled_at: null,
+      });
+
+      const attributionResult = await runPostingFlow(attributionPost, {
+        skipApproval: true,
+        fastMode: true,
+        scheduleAt: attributionTime,
+      });
+
+      if (!attributionResult?.ok) {
+        throw new Error(attributionResult?.reason || "Failed to schedule attribution post.");
+      }
+
+      scheduled.push({
+        id: attributionPost.id,
+        pipeline: "attribution",
+        scheduledAt: attributionTime.toISOString(),
       });
     }
 

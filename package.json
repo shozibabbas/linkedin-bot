@@ -1,36 +1,69 @@
 {
-  "name": "linkedin-human-loop-cli",
+  "name": "linkedin-bot-desktop",
   "version": "1.0.0",
-  "description": "Human-in-the-loop LinkedIn posting CLI for macOS using Playwright",
-  "main": "scheduler.js",
+  "description": "LinkedIn automation desktop app with morning scheduling, posts module, and licensing",
+  "main": "main.js",
   "type": "commonjs",
+  "homepage": "./",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "login": "node login.js",
-    "add-post": "node add-post.js",
-    "post-now": "node post-now.js",
-    "post-now:auto": "node post-now-auto.js",
-    "start": "node scheduler.js",
-    "start:all": "node launch-agent-entry.js",
-    "web:build": "vite build",
-    "web:start": "npm run web:build && node web-server.js"
+    "dev": "electron .",
+    "start": "vite build && electron .",
+    "build": "vite build && electron-builder",
+    "build:mac": "vite build && electron-builder --mac",
+    "build:win": "vite build && electron-builder --win",
+    "generate-license": "node generate-license.js"
+  },
+  "build": {
+    "appId": "com.shozibabbas.linkedin-bot",
+    "productName": "LinkedIn Bot",
+    "icon": "assets/icon.png",
+    "files": [
+      "main.js",
+      "preload.js",
+      "*.js",
+      "dist/**/*",
+      "assets/**/*",
+      "node_modules/**/*",
+      ".env"
+    ],
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist-app"
+    },
+    "mac": {
+      "icon": "assets/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    }
   },
   "dependencies": {
+    "axios": "^1.7.7",
     "better-sqlite3": "^11.9.1",
+    "cheerio": "^1.0.0-rc.12",
     "dotenv": "^16.4.5",
-    "express": "^4.21.2",
-    "imapflow": "^1.0.181",
-    "mailparser": "^3.7.2",
+    "electron-store": "^8.2.0",
     "node-cron": "^3.0.3",
-    "node-notifier": "^10.0.1",
-    "nodemailer": "^6.9.15",
+    "nodemailer": "^8.0.6",
     "playwright": "^1.52.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "electron": "^32.3.3",
+    "electron-builder": "^25.1.8",
     "vite": "^5.4.10"
   }
 }

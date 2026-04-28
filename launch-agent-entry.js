@@ -1,10 +1,8 @@
 const { startScheduler } = require("./scheduler");
-const { startWebServer } = require("./web-server");
 
 function startServices() {
-  console.log("[launch] Starting scheduler and web server...");
+  console.log("[launch] Starting scheduler...");
   startScheduler();
-  startWebServer();
   console.log("[launch] All services started.");
 }
 

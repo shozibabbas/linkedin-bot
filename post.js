@@ -4,15 +4,38 @@ const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const dotenv = require("dotenv");
 const { chromium } = require("playwright");
+const { app } = require("electron");
 
-const { getNextPendingPost, markPosted, markFailed } = require("./db");
+const { getNextPendingPost, markPosted, markFailed, getSetting } = require("./db");
 const { sendPostResultEmail } = require("./email");
 
 dotenv.config();
 
 const execFileAsync = promisify(execFile);
 
-const AUTH_PATH = path.join(__dirname, "auth.json");
+const authDir = app.isPackaged 
+  ? app.getPath("userData") 
+  : __dirname;
+const AUTH_PATH = path.join(authDir, "auth.json");
+
+function getBrowserLaunchOptions() {
+  const mode = String(getSetting("playwright_browser_mode", "managed") || "managed").trim();
+  const customPath = String(getSetting("playwright_browser_path", "") || "").trim();
+
+  if (mode === "custom" && customPath) {
+    return { executablePath: customPath };
+  }
+
+  if (mode === "chrome") {
+    return { channel: "chrome" };
+  }
+
+  if (mode === "msedge") {
+    return { channel: "msedge" };
+  }
+
+  return {};
+}
 
 function randomBetween(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -562,7 +585,11 @@ async function runPostingFlow(postInput, options = {}) {
 
     let browser;
     try {
-      browser = await chromium.launch({ headless: false, slowMo: fastMode ? 0 : randomBetween(60, 120) });
+      browser = await chromium.launch({
+        headless: false,
+        slowMo: fastMode ? 0 : randomBetween(60, 120),
+        ...getBrowserLaunchOptions(),
+      });
       const context = await browser.newContext({ storageState: AUTH_PATH });
       const page = await context.newPage();
 

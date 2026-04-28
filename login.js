@@ -2,8 +2,32 @@ const path = require("node:path");
 const readline = require("node:readline/promises");
 const { stdin: input, stdout: output } = require("node:process");
 const { chromium } = require("playwright");
+const { app } = require("electron");
+const { getSetting } = require("./db");
 
-const AUTH_PATH = path.join(__dirname, "auth.json");
+const authDir = app.isPackaged 
+  ? app.getPath("userData") 
+  : __dirname;
+const AUTH_PATH = path.join(authDir, "auth.json");
+
+function getBrowserLaunchOptions() {
+  const mode = String(getSetting("playwright_browser_mode", "managed") || "managed").trim();
+  const customPath = String(getSetting("playwright_browser_path", "") || "").trim();
+
+  if (mode === "custom" && customPath) {
+    return { executablePath: customPath };
+  }
+
+  if (mode === "chrome") {
+    return { channel: "chrome" };
+  }
+
+  if (mode === "msedge") {
+    return { channel: "msedge" };
+  }
+
+  return {};
+}
 
 async function waitForManualLogin(page) {
   if (!process.stdin.isTTY) {
@@ -31,7 +55,11 @@ async function runLogin() {
   let browser;
 
   try {
-    browser = await chromium.launch({ headless: false, slowMo: 80 });
+    browser = await chromium.launch({
+      headless: false,
+      slowMo: 80,
+      ...getBrowserLaunchOptions(),
+    });
     const context = await browser.newContext();
     const page = await context.newPage();
 

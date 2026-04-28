@@ -36,7 +36,6 @@ Copy-Item .env.example .env
 ```bash
 node login.js
 node scheduler.js
-npm run web:start
 ```
 
 ### Manual Operations
@@ -97,9 +96,9 @@ Optional:
 1. Verify Node version and dependencies.
 2. Verify `.env` presence and required keys (do not print secret values).
 3. Verify `auth.json` exists, otherwise run login.
-4. Start requested service (`scheduler.js` or `web:start`).
+4. Start scheduler as requested (`node scheduler.js`).
 5. Perform requested action (generate, toggle pipeline, post-now).
-6. Validate result from logs/API/DB state.
+6. Validate result from logs or database state.
 7. Report status and precise next step.
 
 ## 8) Safety and Limits

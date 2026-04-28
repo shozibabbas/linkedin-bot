@@ -8,7 +8,6 @@ Instructions for LLM agents operating this repository.
 
 - Login session refresh: `node login.js`
 - Scheduler: `node scheduler.js`
-- Web admin: `npm run web:start`
 - Manual post flow: `node post-now.js`
 - Auto-approved manual flow: `npm run post-now:auto`
 

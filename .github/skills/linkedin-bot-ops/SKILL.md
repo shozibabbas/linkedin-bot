@@ -1,6 +1,6 @@
 ---
 name: linkedin-bot-ops
-description: "Use when operating this repository with an LLM: setup, login refresh, scheduler/web startup, pipeline toggles, posting-mode verification, and safe command execution for LinkedIn posting workflows on macOS/Linux/Windows."
+description: "Use when operating this repository with an LLM: setup, login refresh, scheduler startup, pipeline toggles, posting-mode verification, and safe command execution for LinkedIn posting workflows on macOS/Linux/Windows."
 ---
 
 # LinkedIn Bot Operations Skill
@@ -14,7 +14,7 @@ This skill gives an LLM a reliable workflow to operate the LinkedIn bot safely a
 - User asks to install or run the bot
 - User asks to refresh LinkedIn login session
 - User asks to generate content or post now
-- User asks to troubleshoot scheduler, pipeline, or web portal behavior
+- User asks to troubleshoot scheduler or pipeline behavior
 - User asks for commands for macOS, Linux, or Windows
 
 ## Core Facts
@@ -22,7 +22,6 @@ This skill gives an LLM a reliable workflow to operate the LinkedIn bot safely a
 - Node runtime: Node 20+
 - Main scheduler entry: `node scheduler.js`
 - Combined startup entry: `node launch-agent-entry.js`
-- Web admin entry: `npm run web:start`
 - Login entry: `node login.js`
 - Database: `posts.db`
 - Pipeline keys: `work_context`, `rss_review`
@@ -49,8 +48,8 @@ Optional but recommended:
 1. Verify dependencies are installed.
 2. Verify `.env` exists and required values are set.
 3. Verify login session exists (`auth.json`) or run login refresh.
-4. Start scheduler and/or web portal as requested.
-5. Validate expected state via logs/API results.
+4. Start scheduler as requested.
+5. Validate expected state via logs.
 6. Report outcomes and next actions clearly.
 
 ## Canonical Commands
@@ -83,12 +82,6 @@ node login.js
 
 ```bash
 node scheduler.js
-```
-
-### Start Web Portal
-
-```bash
-npm run web:start
 ```
 
 ### Manual Posting

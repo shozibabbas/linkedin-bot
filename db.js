@@ -1,10 +1,42 @@
 const path = require("node:path");
 const Database = require("better-sqlite3");
+const { app } = require("electron");
 
-const dbPath = path.join(__dirname, "posts.db");
+// In packaged app, use userData directory (writable); in dev, use project root
+const dbDir = app.isPackaged 
+  ? app.getPath("userData") 
+  : __dirname;
+const dbPath = path.join(dbDir, "posts.db");
 const db = new Database(dbPath);
 
 db.pragma("journal_mode = WAL");
+
+// NEW SCHEMA FOR ELECTRON APP
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS posts_v2 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'scheduled', 'posted', 'failed')),
+    type TEXT NOT NULL DEFAULT 'manual' CHECK (type IN ('manual', 'generated', 'attribution')),
+    scheduled_at DATETIME,
+    posted_at DATETIME,
+    error TEXT,
+    source_url TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS trial_info (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    install_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    posts_count INTEGER DEFAULT 0
+  );
+`);
+
+// LEGACY SCHEMA (kept for backward compatibility)
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS posts (
@@ -447,8 +479,163 @@ function upsertDailyScheduleRun(input) {
   return getDailyScheduleRunByDay(dayKey);
 }
 
+// V2 Posts functions (for Electron app)
+
+const createPostV2Stmt = db.prepare(`
+  INSERT INTO posts_v2 (content, status, type, scheduled_at, source_url)
+  VALUES (@content, @status, @type, @scheduled_at, @source_url)
+`);
+
+const getPostV2Stmt = db.prepare(`
+  SELECT id, content, status, type, scheduled_at, posted_at, error, source_url, created_at, updated_at
+  FROM posts_v2
+  WHERE id = ?
+`);
+
+const listPostsV2Stmt = db.prepare(`
+  SELECT id, content, status, type, scheduled_at, posted_at, error, source_url, created_at, updated_at
+  FROM posts_v2
+  ORDER BY created_at DESC
+`);
+
+const listScheduledPostsV2Stmt = db.prepare(`
+  SELECT id, content, status, type, scheduled_at, posted_at, error, source_url, created_at, updated_at
+  FROM posts_v2
+  WHERE status IN ('pending', 'scheduled')
+  ORDER BY scheduled_at ASC
+`);
+
+const updatePostV2Stmt = db.prepare(`
+  UPDATE posts_v2
+  SET content = @content,
+      status = @status,
+      type = @type,
+      scheduled_at = @scheduled_at,
+      posted_at = @posted_at,
+      error = @error,
+      source_url = @source_url,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE id = @id
+`);
+
+const deletePostV2Stmt = db.prepare(`
+  DELETE FROM posts_v2
+  WHERE id = ?
+`);
+
+function createPostV2(input) {
+  if (!input.content || !String(input.content).trim()) {
+    throw new Error("Post content is required");
+  }
+
+  const result = createPostV2Stmt.run({
+    content: String(input.content).trim(),
+    status: input.status || "pending",
+    type: input.type || "manual",
+    scheduled_at: input.scheduled_at || null,
+    source_url: input.source_url || null,
+  });
+
+  return getPostV2ById(result.lastInsertRowid);
+}
+
+function getPostV2ById(id) {
+  return getPostV2Stmt.get(id) || null;
+}
+
+function listPostsV2() {
+  return listPostsV2Stmt.all();
+}
+
+function listScheduledPostsV2() {
+  return listScheduledPostsV2Stmt.all();
+}
+
+function updatePostV2(id, input) {
+  const existing = getPostV2ById(id);
+  if (!existing) {
+    throw new Error(`Post ${id} not found`);
+  }
+
+  updatePostV2Stmt.run({
+    id,
+    content: input.content ?? existing.content,
+    status: input.status ?? existing.status,
+    type: input.type ?? existing.type,
+    scheduled_at: Object.prototype.hasOwnProperty.call(input, "scheduled_at") ? input.scheduled_at : existing.scheduled_at,
+    posted_at: Object.prototype.hasOwnProperty.call(input, "posted_at") ? input.posted_at : existing.posted_at,
+    error: input.error ?? existing.error,
+    source_url: input.source_url ?? existing.source_url,
+  });
+
+  return getPostV2ById(id);
+}
+
+function deletePostV2(id) {
+  deletePostV2Stmt.run(id);
+}
+
+function markPostV2AsScheduled(id, scheduledAt) {
+  return updatePostV2(id, { status: "scheduled", scheduled_at: scheduledAt });
+}
+
+function markPostV2AsPosted(id) {
+  return updatePostV2(id, { status: "posted", posted_at: new Date().toISOString() });
+}
+
+function markPostV2AsFailed(id, errorMessage) {
+  return updatePostV2(id, { status: "failed", error: String(errorMessage || "Unknown error") });
+}
+
+// Trial info functions
+
+const getTrialInfoStmt = db.prepare(`
+  SELECT id, install_date, posts_count
+  FROM trial_info
+  WHERE id = 1
+`);
+
+const createTrialInfoStmt = db.prepare(`
+  INSERT INTO trial_info (id, posts_count)
+  VALUES (1, 0)
+`);
+
+const incrementTrialPostCountStmt = db.prepare(`
+  UPDATE trial_info
+  SET posts_count = posts_count + 1
+  WHERE id = 1
+`);
+
+function getOrCreateTrialInfo() {
+  let trialInfo = getTrialInfoStmt.get();
+  if (!trialInfo) {
+    createTrialInfoStmt.run();
+    trialInfo = getTrialInfoStmt.get();
+  }
+  return trialInfo;
+}
+
+function incrementTrialPostCount() {
+  getOrCreateTrialInfo();
+  incrementTrialPostCountStmt.run();
+}
+
 module.exports = {
   db,
+  // V2 Posts functions
+  createPostV2,
+  getPostV2ById,
+  listPostsV2,
+  updatePostV2,
+  deletePostV2,
+  listScheduledPostsV2,
+  markPostV2AsScheduled,
+  markPostV2AsPosted,
+  markPostV2AsFailed,
+  // Trial functions
+  getOrCreateTrialInfo,
+  incrementTrialPostCount,
+  // Legacy functions
   addPost,
   getSetting,
   setSetting,
