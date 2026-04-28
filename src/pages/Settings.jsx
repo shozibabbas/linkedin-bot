@@ -7,6 +7,7 @@ function defaultContext() {
 const TABS = [
   { id: "generation", label: "Generation" },
   { id: "scheduler", label: "Scheduler" },
+  { id: "automation", label: "Automation" },
   { id: "contexts", label: "Context Sources" },
   { id: "account", label: "Account" },
 ];
@@ -33,6 +34,22 @@ export default function Settings() {
     includeCompany: false,
   });
   const [scheduler, setScheduler] = useState({ enabled: true, startTime: "09:00", endTime: "23:59", postsPerDay: 3, autoRun: true });
+  const [autoReactor, setAutoReactor] = useState({
+    enabled: false,
+    autoRun: false,
+    feedUrl: "https://www.linkedin.com/feed/",
+    likesPerRun: 20,
+    unlimited: false,
+  });
+  const [autoCommenter, setAutoCommenter] = useState({
+    enabled: false,
+    autoRun: false,
+    feedUrl: "https://www.linkedin.com/feed/",
+    commentsPerRun: 10,
+    unlimited: false,
+    cfbrEnabled: true,
+    commentInstructions: "Write as a senior software engineer. Be specific and add genuine value. Reference a detail from the post. Never be generic. Sound like a real person, not a bot.",
+  });
   const [attribution, setAttribution] = useState({ enabled: true, dailyTime: "14:00" });
   const [workContexts, setWorkContexts] = useState([defaultContext()]);
 
@@ -59,6 +76,22 @@ export default function Settings() {
         includeCompany: false,
       });
       setScheduler(settings?.scheduler || { enabled: true, startTime: "09:00", endTime: "23:59", postsPerDay: 3, autoRun: true });
+      setAutoReactor(settings?.autoReactor || {
+        enabled: false,
+        autoRun: false,
+        feedUrl: "https://www.linkedin.com/feed/",
+        likesPerRun: 20,
+        unlimited: false,
+      });
+      setAutoCommenter(settings?.autoCommenter || {
+        enabled: false,
+        autoRun: false,
+        feedUrl: "https://www.linkedin.com/feed/",
+        commentsPerRun: 10,
+        unlimited: false,
+        cfbrEnabled: true,
+        commentInstructions: "Write as a senior software engineer. Be specific and add genuine value. Reference a detail from the post. Never be generic. Sound like a real person, not a bot.",
+      });
       setAttribution(settings?.attribution || { enabled: true, dailyTime: "14:00" });
       setLoginStatus(login || null);
 
@@ -148,6 +181,8 @@ export default function Settings() {
         generationInstructions,
         generationProfile,
         scheduler: { ...scheduler, postsPerDay: Number(scheduler.postsPerDay) },
+        autoReactor: { ...autoReactor, likesPerRun: Number(autoReactor.likesPerRun) },
+        autoCommenter: { ...autoCommenter, commentsPerRun: Number(autoCommenter.commentsPerRun) },
         attribution,
         workContexts,
       };
@@ -373,6 +408,143 @@ export default function Settings() {
                   onClick={() => setAttribution((prev) => ({ ...prev, enabled: !prev.enabled }))}
                 >
                   Attribution {attribution.enabled ? "On" : "Off"}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {/* ── Automation ─────────────────────────────── */}
+        {activeTab === "automation" && (
+          <div className="grid-2">
+            <section className="panel">
+              <h2 className="panel-title">Auto Reactor</h2>
+              <p className="page-subtitle">Auto-like unreacted posts in the feed.</p>
+
+              <div className="form-row" style={{ marginTop: "12px" }}>
+                <label>Feed URL</label>
+                <input
+                  type="url"
+                  value={autoReactor.feedUrl}
+                  onChange={(e) => setAutoReactor((prev) => ({ ...prev, feedUrl: e.target.value }))}
+                  placeholder="https://www.linkedin.com/feed/"
+                />
+              </div>
+
+              <div className="form-row">
+                <label>Reactions Per Run</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="500"
+                  disabled={autoReactor.unlimited}
+                  value={autoReactor.likesPerRun}
+                  onChange={(e) => setAutoReactor((prev) => ({ ...prev, likesPerRun: e.target.value }))}
+                />
+              </div>
+
+              <div className="form-row" style={{ marginTop: "4px" }}>
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={autoReactor.unlimited}
+                    onChange={(e) => setAutoReactor((prev) => ({ ...prev, unlimited: e.target.checked }))}
+                  />
+                  <span className="checkbox-label-text">Unlimited mode</span>
+                </label>
+              </div>
+
+              <div className="btn-row" style={{ marginTop: "4px" }}>
+                <button
+                  type="button"
+                  className={`btn ${autoReactor.enabled ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => setAutoReactor((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                >
+                  Auto Reactor {autoReactor.enabled ? "Enabled" : "Disabled"}
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${autoReactor.autoRun ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => setAutoReactor((prev) => ({ ...prev, autoRun: !prev.autoRun }))}
+                >
+                  Auto Run {autoReactor.autoRun ? "On" : "Off"}
+                </button>
+              </div>
+            </section>
+
+            <section className="panel">
+              <h2 className="panel-title">Auto Commenter</h2>
+              <p className="page-subtitle">Traverse feed posts and publish short contextual comments.</p>
+
+              <div className="form-row" style={{ marginTop: "12px" }}>
+                <label>Feed URL</label>
+                <input
+                  type="url"
+                  value={autoCommenter.feedUrl}
+                  onChange={(e) => setAutoCommenter((prev) => ({ ...prev, feedUrl: e.target.value }))}
+                  placeholder="https://www.linkedin.com/feed/"
+                />
+              </div>
+
+              <div className="form-row">
+                <label>Comments Per Run</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="300"
+                  disabled={autoCommenter.unlimited}
+                  value={autoCommenter.commentsPerRun}
+                  onChange={(e) => setAutoCommenter((prev) => ({ ...prev, commentsPerRun: e.target.value }))}
+                />
+              </div>
+
+              <div className="form-row" style={{ marginTop: "4px" }}>
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={autoCommenter.unlimited}
+                    onChange={(e) => setAutoCommenter((prev) => ({ ...prev, unlimited: e.target.checked }))}
+                  />
+                  <span className="checkbox-label-text">Unlimited mode</span>
+                </label>
+              </div>
+
+              <div className="form-row" style={{ marginTop: "4px" }}>
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={autoCommenter.cfbrEnabled !== false}
+                    onChange={(e) => setAutoCommenter((prev) => ({ ...prev, cfbrEnabled: e.target.checked }))}
+                  />
+                  <span className="checkbox-label-text">CFBR mode — comment "CFBR" on job posts and posts asking for wider reach</span>
+                </label>
+              </div>
+
+              <div className="form-row" style={{ marginTop: "10px" }}>
+                <label>Comment Instructions</label>
+                <textarea
+                  rows={4}
+                  value={autoCommenter.commentInstructions || ""}
+                  onChange={(e) => setAutoCommenter((prev) => ({ ...prev, commentInstructions: e.target.value }))}
+                  placeholder="Instructions for the AI when generating comments..."
+                  style={{ resize: "vertical" }}
+                />
+              </div>
+
+              <div className="btn-row" style={{ marginTop: "4px" }}>
+                <button
+                  type="button"
+                  className={`btn ${autoCommenter.enabled ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => setAutoCommenter((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                >
+                  Auto Commenter {autoCommenter.enabled ? "Enabled" : "Disabled"}
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${autoCommenter.autoRun ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => setAutoCommenter((prev) => ({ ...prev, autoRun: !prev.autoRun }))}
+                >
+                  Auto Run {autoCommenter.autoRun ? "On" : "Off"}
                 </button>
               </div>
             </section>

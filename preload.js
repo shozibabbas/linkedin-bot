@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getAutoReactorStatus: () => ipcRenderer.invoke("get-auto-reactor-status"),
   runAutoReactorNow: () => ipcRenderer.invoke("run-auto-reactor-now"),
   stopAutoReactor: () => ipcRenderer.invoke("stop-auto-reactor"),
+
+  // Auto commenter
+  getAutoCommenterStatus: () => ipcRenderer.invoke("get-auto-commenter-status"),
+  runAutoCommenterNow: () => ipcRenderer.invoke("run-auto-commenter-now"),
+  stopAutoCommenter: () => ipcRenderer.invoke("stop-auto-commenter"),
   
   // Trial
   getTrialStatus: () => ipcRenderer.invoke("get-trial-status"),

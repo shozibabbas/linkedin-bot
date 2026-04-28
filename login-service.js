@@ -40,6 +40,23 @@ function getLoginStatus() {
   }
 }
 
+function getLoginScriptPath() {
+  const scriptPath = path.join(__dirname, "login.js");
+  const unpackedPath = scriptPath.replace(
+    `${path.sep}app.asar${path.sep}`,
+    `${path.sep}app.asar.unpacked${path.sep}`
+  );
+  return fs.existsSync(unpackedPath) ? unpackedPath : scriptPath;
+}
+
+function getSpawnWorkingDirectory() {
+  const userData = app.getPath("userData");
+  if (fs.existsSync(userData) && fs.statSync(userData).isDirectory()) {
+    return userData;
+  }
+  return process.cwd();
+}
+
 function runLoginRefresh() {
   return new Promise((resolve, reject) => {
     const childEnv = {
@@ -47,8 +64,8 @@ function runLoginRefresh() {
       ELECTRON_RUN_AS_NODE: "1",
     };
 
-    const child = spawn(process.execPath, [path.join(__dirname, "login.js")], {
-      cwd: __dirname,
+    const child = spawn(process.execPath, [getLoginScriptPath()], {
+      cwd: getSpawnWorkingDirectory(),
       env: childEnv,
       stdio: "pipe",
     });

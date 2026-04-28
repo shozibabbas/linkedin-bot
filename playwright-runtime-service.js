@@ -8,12 +8,26 @@ const { getSetting } = require("./db");
 function getPlaywrightCliPath() {
   const packageJsonPath = require.resolve("playwright/package.json");
   const cliPath = path.join(path.dirname(packageJsonPath), "cli.js");
+  const unpackedCliPath = cliPath.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
+
+  if (fs.existsSync(unpackedCliPath)) {
+    return unpackedCliPath;
+  }
 
   if (!fs.existsSync(cliPath)) {
-    throw new Error(`Playwright CLI not found at expected path: ${cliPath}`);
+    throw new Error(`Playwright CLI not found at expected paths: ${cliPath} or ${unpackedCliPath}`);
   }
 
   return cliPath;
+}
+
+function getInstallerWorkingDirectory() {
+  const userData = app.getPath("userData");
+  if (fs.existsSync(userData) && fs.statSync(userData).isDirectory()) {
+    return userData;
+  }
+
+  return process.cwd();
 }
 
 function getBrowsersPath() {
@@ -123,10 +137,15 @@ function installManagedRuntime(sender, options = {}) {
     }
 
     const args = [cliPath, "install", "chromium"];
+    const workingDirectory = getInstallerWorkingDirectory();
+
+    if (!fs.existsSync(getBrowsersPath())) {
+      fs.mkdirSync(getBrowsersPath(), { recursive: true });
+    }
 
     sender.send("playwright-runtime-install-log", {
       stream: "system",
-      text: `[installer] Running: node ${path.basename(cliPath)} install chromium${options.withDeps && process.platform === "linux" ? " --with-deps" : ""}\n`,
+      text: `[installer] Running: node ${path.basename(cliPath)} install chromium${options.withDeps && process.platform === "linux" ? " --with-deps" : ""} (cwd: ${workingDirectory})\n`,
     });
 
     if (options.withDeps && process.platform === "linux") {
@@ -134,7 +153,7 @@ function installManagedRuntime(sender, options = {}) {
     }
 
     const child = spawn(process.execPath, args, {
-      cwd: __dirname,
+      cwd: workingDirectory,
       env: getPlaywrightEnv(),
       stdio: "pipe",
     });

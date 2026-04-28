@@ -540,6 +540,13 @@ textarea {
   padding: 12px;
 }
 
+.spark-tile-accent {
+  background:
+    radial-gradient(220px 80px at 100% 0%, rgba(101, 216, 255, 0.18), transparent 60%),
+    rgba(0, 0, 0, 0.52);
+  border-color: rgba(101, 216, 255, 0.28);
+}
+
 .dashboard-kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -550,6 +557,13 @@ textarea {
   border: 1px solid var(--line);
   background: linear-gradient(150deg, rgba(17, 17, 17, 0.95), rgba(5, 5, 5, 0.96));
   padding: 14px;
+}
+
+.kpi-card-commenter {
+  background:
+    radial-gradient(280px 120px at 100% 0%, rgba(101, 216, 255, 0.16), transparent 65%),
+    linear-gradient(150deg, rgba(17, 17, 17, 0.95), rgba(5, 5, 5, 0.96));
+  border-color: rgba(101, 216, 255, 0.28);
 }
 
 .kpi-value {
@@ -638,6 +652,10 @@ textarea {
   background: var(--cyan);
 }
 
+.legend-swatch.commenter {
+  background: linear-gradient(180deg, #7ae4ff 0%, #2bc0ff 100%);
+}
+
 .bars-stack {
   display: grid;
   gap: 10px;
@@ -724,6 +742,101 @@ textarea {
 .react-bar-fill {
   width: 100%;
   background: linear-gradient(180deg, #ffdf7a 0%, #ffc000 60%, #8d6c00 100%);
+}
+
+.react-bar-fill-commenter {
+  background: linear-gradient(180deg, #b0efff 0%, #65d8ff 52%, #1477aa 100%);
+}
+
+.react-bars-commenter {
+  background:
+    radial-gradient(220px 80px at 100% 0%, rgba(101, 216, 255, 0.14), transparent 60%),
+    rgba(0, 0, 0, 0.45);
+}
+
+.dashboard-automation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.automation-panel {
+  position: relative;
+  overflow: hidden;
+}
+
+.automation-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.automation-panel-reactor::before {
+  background: radial-gradient(380px 140px at 100% 0%, rgba(255, 192, 0, 0.16), transparent 60%);
+}
+
+.automation-panel-commenter::before {
+  background: radial-gradient(380px 140px at 100% 0%, rgba(101, 216, 255, 0.18), transparent 60%);
+}
+
+.automation-head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.automation-badge {
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  min-width: 72px;
+  text-align: center;
+  font-family: "Orbitron", sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.automation-badge.is-live {
+  color: #7af7a7;
+  border-color: rgba(122, 247, 167, 0.45);
+}
+
+.automation-badge.is-armed {
+  color: var(--gold);
+  border-color: rgba(255, 192, 0, 0.35);
+}
+
+.automation-badge.is-off {
+  color: var(--muted);
+}
+
+.automation-stat-grid {
+  position: relative;
+  z-index: 1;
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.automation-stat-card {
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.44);
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.automation-stat-card strong {
+  font-family: "Orbitron", sans-serif;
+  font-size: clamp(20px, 2vw, 28px);
+  line-height: 1;
 }
 
 .react-bar-value {
@@ -860,7 +973,12 @@ textarea {
   }
 
   .dashboard-kpi-grid,
-  .dashboard-spark-grid {
+  .dashboard-spark-grid,
+  .dashboard-automation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .automation-stat-grid {
     grid-template-columns: 1fr;
   }
 

@@ -7,6 +7,7 @@ export default function Navigation({ currentPage, onNavigate }) {
     { id: "posts", label: "Posts", icon: "✎" },
     { id: "scheduler-run", label: "Scheduler", icon: "⏱" },
     { id: "auto-reactor", label: "Auto Reactor", icon: "❤" },
+    { id: "auto-commenter", label: "Auto Commenter", icon: "✦" },
     { id: "settings", label: "Settings", icon: "⚙" },
     { id: "license", label: "License", icon: "🔐" },
     { id: "tutorials", label: "Tutorials", icon: "?" },

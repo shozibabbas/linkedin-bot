@@ -14,7 +14,13 @@
     "build": "vite build && electron-builder",
     "build:mac": "vite build && electron-builder --mac",
     "build:win": "vite build && electron-builder --win",
-    "generate-license": "node generate-license.js"
+    "generate-license": "node generate-license.js",
+    "video:studio": "remotion studio remotion/Root.jsx",
+    "video:render:1x1": "remotion render remotion/Root.jsx LinkedInBotIntroSquare out/linkedin-bot-intro-1x1.mp4",
+    "video:render:1x1:muted-captioned": "remotion render remotion/Root.jsx LinkedInBotIntroSquare out/linkedin-bot-intro-1x1-muted-captioned.mp4 --props='{\"muted\":true}'",
+    "video:render:1x1:music": "remotion render remotion/Root.jsx LinkedInBotIntroSquare out/linkedin-bot-intro-1x1-music.mp4 --props='{\"muted\":false,\"audioSrc\":\"video-assets/audio/main.mp3\"}'",
+    "video:render:16x9": "remotion render remotion/Root.jsx LinkedInBotIntroLandscape out/linkedin-bot-intro-16x9.mp4",
+    "video:render:9x16": "remotion render remotion/Root.jsx LinkedInBotIntroPortrait out/linkedin-bot-intro-9x16.mp4"
   },
   "build": {
     "appId": "com.shozibabbas.linkedin-bot",
@@ -62,8 +68,10 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@remotion/cli": "^4.0.452",
     "electron": "^32.3.3",
     "electron-builder": "^25.1.8",
+    "remotion": "^4.0.452",
     "vite": "^5.4.10"
   }
 }

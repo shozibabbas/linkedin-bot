@@ -89,6 +89,7 @@ export default function Dashboard({ onNavigate }) {
   const [licenseStatus, setLicenseStatus] = useState(null);
   const [loginStatus, setLoginStatus] = useState(null);
   const [autoReactorStatus, setAutoReactorStatus] = useState(null);
+  const [autoCommenterStatus, setAutoCommenterStatus] = useState(null);
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -97,12 +98,13 @@ export default function Dashboard({ onNavigate }) {
     async function loadStatus() {
       try {
         setLoading(true);
-        const [scheduler, trial, license, allPosts, reactor] = await Promise.all([
+        const [scheduler, trial, license, allPosts, reactor, commenter] = await Promise.all([
           window.electronAPI.getSchedulerStatus(),
           window.electronAPI.getTrialStatus(),
           window.electronAPI.getLicenseStatus(),
           window.electronAPI.listPosts(),
           window.electronAPI.getAutoReactorStatus(),
+          window.electronAPI.getAutoCommenterStatus(),
         ]);
         const login = await window.electronAPI.getLoginStatus();
         setSchedulerStatus(scheduler);
@@ -111,6 +113,7 @@ export default function Dashboard({ onNavigate }) {
         setLoginStatus(login);
         setPosts(Array.isArray(allPosts) ? allPosts : []);
         setAutoReactorStatus(reactor || null);
+        setAutoCommenterStatus(commenter || null);
       } catch (err) {
         setError(err.message);
       } finally {
@@ -175,8 +178,6 @@ export default function Dashboard({ onNavigate }) {
 
   const totalPosts = posts.length;
   const postedCount = statusCounts.posted || 0;
-  const failedCount = statusCounts.failed || 0;
-  const successRate = totalPosts > 0 ? postedCount / totalPosts : 0;
 
   const trend = buildTrend(posts, 7);
   const reactTrend = Array.isArray(autoReactorStatus?.reactsTrend7d) ? autoReactorStatus.reactsTrend7d : [];
@@ -185,6 +186,13 @@ export default function Dashboard({ onNavigate }) {
   const totalReacts = Number(autoReactorStatus?.totalReacts || 0);
   const weeklyReacts = reactTrend.reduce((sum, row) => sum + (Number(row.count) || 0), 0);
   const reactPeak = Math.max(1, ...reactTrend.map((row) => Number(row.count) || 0));
+  const commentTrend = Array.isArray(autoCommenterStatus?.commentsTrend7d) ? autoCommenterStatus.commentsTrend7d : [];
+  const totalComments = Number(autoCommenterStatus?.totalComments || 0);
+  const weeklyComments = commentTrend.reduce((sum, row) => sum + (Number(row.count) || 0), 0);
+  const commentPeak = Math.max(1, ...commentTrend.map((row) => Number(row.count) || 0));
+  const automationScore = weeklyReacts + weeklyComments;
+  const autoReactorMode = autoReactorStatus?.running ? "Live" : autoReactorStatus?.enabled ? "Armed" : "Off";
+  const autoCommenterMode = autoCommenterStatus?.running ? "Live" : autoCommenterStatus?.enabled ? "Armed" : "Off";
 
   const chartWidth = 520;
   const chartHeight = 210;
@@ -219,14 +227,11 @@ export default function Dashboard({ onNavigate }) {
           <div className="btn-row" style={{ marginTop: "14px" }}>
             <button className="btn btn-primary" onClick={handleRunNow}>Run Scheduler Now</button>
             <button className="btn btn-ghost" onClick={() => onNavigate?.("auto-reactor")}>Open Auto Reactor</button>
+            <button className="btn btn-ghost" onClick={() => onNavigate?.("auto-commenter")}>Open Auto Commenter</button>
           </div>
         </div>
 
         <div className="dashboard-spark-grid">
-          <div className="spark-tile">
-            <div className="metric-label">Success Rate</div>
-            <div className="metric-value">{toPercent(successRate)}</div>
-          </div>
           <div className="spark-tile">
             <div className="metric-label">7D Posted</div>
             <div className="metric-value">{weeklyPosted}</div>
@@ -239,6 +244,10 @@ export default function Dashboard({ onNavigate }) {
             <div className="metric-label">LinkedIn Auth</div>
             <div className="metric-value" style={{ fontSize: "18px" }}>{loginStatus?.loggedIn ? "Saved" : "Missing"}</div>
           </div>
+          <div className="spark-tile spark-tile-accent">
+            <div className="metric-label">Automation Events</div>
+            <div className="metric-value">{automationScore}</div>
+          </div>
         </div>
       </section>
 
@@ -249,29 +258,95 @@ export default function Dashboard({ onNavigate }) {
           <div className="kpi-sub">All-time content items in queue/history</div>
         </div>
         <div className="kpi-card">
-          <div className="metric-label">Posted</div>
-          <div className="kpi-value">{postedCount}</div>
-          <div className="kpi-sub">Published successfully</div>
-        </div>
-        <div className="kpi-card">
-          <div className="metric-label">Pending + Scheduled</div>
-          <div className="kpi-value">{(statusCounts.pending || 0) + (statusCounts.scheduled || 0)}</div>
-          <div className="kpi-sub">Pipeline still in progress</div>
-        </div>
-        <div className="kpi-card">
-          <div className="metric-label">Failed</div>
-          <div className="kpi-value">{failedCount}</div>
-          <div className="kpi-sub">Needs manual re-run or review</div>
-        </div>
-        <div className="kpi-card">
           <div className="metric-label">Total Reacts</div>
           <div className="kpi-value">{totalReacts}</div>
           <div className="kpi-sub">All-time reactions sent by Auto Reactor</div>
         </div>
+        <div className="kpi-card kpi-card-commenter">
+          <div className="metric-label">Total Comments</div>
+          <div className="kpi-value">{totalComments}</div>
+          <div className="kpi-sub">All-time comments sent by Auto Commenter</div>
+        </div>
       </section>
 
-      <div className="grid-2">
-        <section className="panel">
+      <section className="dashboard-automation-grid" style={{ marginBottom: "18px" }}>
+        <section className="panel automation-panel automation-panel-reactor">
+          <div className="automation-head">
+            <div>
+              <p className="metric-label">Automation Surface</p>
+              <h2 className="panel-title" style={{ marginTop: 0 }}>Auto Reactor</h2>
+            </div>
+            <span className={`automation-badge ${autoReactorStatus?.running ? "is-live" : autoReactorStatus?.enabled ? "is-armed" : "is-off"}`}>
+              {autoReactorMode}
+            </span>
+          </div>
+
+          <div className="automation-stat-grid">
+            <div className="automation-stat-card">
+              <span className="metric-label">7D Reacts</span>
+              <strong>{weeklyReacts}</strong>
+            </div>
+            <div className="automation-stat-card">
+              <span className="metric-label">Peak Day</span>
+              <strong>{reactPeak}</strong>
+            </div>
+            <div className="automation-stat-card">
+              <span className="metric-label">Per Run</span>
+              <strong>{autoReactorStatus?.unlimited ? "∞" : Number(autoReactorStatus?.likesPerRun || 0)}</strong>
+            </div>
+          </div>
+
+          <p className="page-subtitle" style={{ marginTop: "12px" }}>
+            {autoReactorStatus?.lastStopReason || "Auto-like qualified feed posts with visible runtime pacing and performance history."}
+          </p>
+
+          <div className="btn-row" style={{ marginTop: "12px" }}>
+            <button className="btn btn-primary" onClick={() => onNavigate?.("auto-reactor")}>Open Auto Reactor</button>
+          </div>
+        </section>
+
+        <section className="panel automation-panel automation-panel-commenter">
+          <div className="automation-head">
+            <div>
+              <p className="metric-label">Automation Surface</p>
+              <h2 className="panel-title" style={{ marginTop: 0 }}>Auto Commenter</h2>
+            </div>
+            <span className={`automation-badge ${autoCommenterStatus?.running ? "is-live" : autoCommenterStatus?.enabled ? "is-armed" : "is-off"}`}>
+              {autoCommenterMode}
+            </span>
+          </div>
+
+          <div className="automation-stat-grid">
+            <div className="automation-stat-card">
+              <span className="metric-label">7D Comments</span>
+              <strong>{weeklyComments}</strong>
+            </div>
+            <div className="automation-stat-card">
+              <span className="metric-label">Peak Day</span>
+              <strong>{commentPeak}</strong>
+            </div>
+            <div className="automation-stat-card">
+              <span className="metric-label">Per Run</span>
+              <strong>{autoCommenterStatus?.unlimited ? "∞" : Number(autoCommenterStatus?.commentsPerRun || 0)}</strong>
+            </div>
+          </div>
+
+          <div className="type-chip-row" style={{ marginTop: "12px" }}>
+            <span className="chip">CFBR: {autoCommenterStatus?.cfbrEnabled === false ? "Off" : "On"}</span>
+            <span className="chip">Auto Run: {autoCommenterStatus?.autoRun ? "On" : "Off"}</span>
+          </div>
+
+          <p className="page-subtitle" style={{ marginTop: "12px" }}>
+            {autoCommenterStatus?.lastStopReason || "Context-aware commenting with configurable instructions and CFBR fallback for reach-heavy posts."}
+          </p>
+
+          <div className="btn-row" style={{ marginTop: "12px" }}>
+            <button className="btn btn-primary" onClick={() => onNavigate?.("auto-commenter")}>Open Auto Commenter</button>
+          </div>
+        </section>
+      </section>
+
+      <section className="panel" style={{ marginBottom: "18px" }}>
           <h2 className="panel-title">Posting Trend (7 Days)</h2>
           <p className="page-subtitle" style={{ marginBottom: "12px" }}>Posted vs scheduled throughput by day.</p>
 
@@ -297,9 +372,9 @@ export default function Dashboard({ onNavigate }) {
             <span><i className="legend-swatch scheduled" /> Scheduled</span>
             <span>Max/day: {postedMax}</span>
           </div>
-        </section>
+      </section>
 
-        <section className="panel">
+      <section className="panel" style={{ marginBottom: "18px" }}>
           <h2 className="panel-title">Pipeline Mix</h2>
           <p className="page-subtitle" style={{ marginBottom: "12px" }}>Status distribution and content source type split.</p>
 
@@ -353,8 +428,31 @@ export default function Dashboard({ onNavigate }) {
               <span>Peak/day: {reactPeak}</span>
             </div>
           </div>
-        </section>
-      </div>
+
+          <div style={{ marginTop: "18px" }}>
+            <h3 className="metric-label" style={{ margin: 0 }}>Comments (7 Days)</h3>
+            <div className="react-bars react-bars-commenter" style={{ marginTop: "8px" }}>
+              {(commentTrend.length ? commentTrend : trend.map((row) => ({ key: row.key, label: row.label, count: 0 }))).map((row) => {
+                const value = Number(row.count) || 0;
+                const height = `${Math.max(10, (value / commentPeak) * 100)}%`;
+                return (
+                  <div className="react-bar-col" key={`comment-${row.key}`}>
+                    <div className="react-bar-track">
+                      <div className="react-bar-fill react-bar-fill-commenter" style={{ height }} />
+                    </div>
+                    <div className="react-bar-value">{value}</div>
+                    <div className="react-bar-label">{row.label}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="chart-legend" style={{ marginTop: "10px" }}>
+              <span><i className="legend-swatch commenter" /> 7D Comments: {weeklyComments}</span>
+              <span>Peak/day: {commentPeak}</span>
+            </div>
+          </div>
+      </section>
 
       {isInTrial && (
         <section className="hero-highlight" style={{ marginTop: "18px", marginBottom: "18px", display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "center", flexWrap: "wrap" }}>
@@ -429,6 +527,7 @@ export default function Dashboard({ onNavigate }) {
             <button className="btn btn-primary" onClick={() => onNavigate?.("posts")}>Open Posts</button>
             <button className="btn btn-ghost" onClick={() => onNavigate?.("settings")}>Open Settings</button>
             <button className="btn btn-ghost" onClick={() => onNavigate?.("auto-reactor")}>Open Auto Reactor</button>
+            <button className="btn btn-ghost" onClick={() => onNavigate?.("auto-commenter")}>Open Auto Commenter</button>
           </div>
         </section>
       </div>

@@ -199,3 +199,31 @@ For AI-agent friendly operation, see:
 - `AGENTS.md`
 
 These files document install, login, commands, safety checks, and execution patterns for Claude, Copilot, and similar LLM agents.
+
+## 11) Product Intro Video (Remotion)
+
+Run the Remotion studio:
+
+```bash
+npm run video:studio
+```
+
+Render outputs:
+
+```bash
+# Primary 1:1 autoplay cut
+npm run video:render:1x1
+
+# Optional derivatives
+npm run video:render:16x9
+npm run video:render:9x16
+```
+
+Unmuted autoplay variant (music + SFX only, no voiceover):
+
+```bash
+# Place music at public/video-assets/audio/main.mp3 first
+npm run video:render:1x1:music
+```
+
+Screenshot slots expected in `public/video-assets/screens/` are documented in `remotion/README.md`.

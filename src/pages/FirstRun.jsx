@@ -23,8 +23,14 @@ export default function FirstRun({ onComplete }) {
 
   const [trialAccepted, setTrialAccepted] = useState(false);
   const [licenseKey, setLicenseKey] = useState("");
+  const DEFAULT_GENERATION_INSTRUCTIONS = "Write like a real human being, not a robot. Avoid hyphens in the middle of sentences. Use natural, flowing language that sounds like how a thoughtful person actually speaks. Keep sentences varied in length. The post should end with a line that naturally invites the reader to share their perspective or start a conversation - something like a genuine question or a low-friction opening for them to reply. Do not use bullet points or em-dashes as structural devices.";
+  const DEFAULT_COMMENT_INSTRUCTIONS = "Write as a senior software engineer. Be specific and add genuine value. Reference a detail from the post. Never be generic. Sound like a real person, not a bot.";
   const [setupData, setSetupData] = useState({
     openaiKey: "",
+    generation: {
+      maxPostWords: 150,
+    },
+    generationInstructions: "",
     generationProfile: {
       designation: "",
       company: "",
@@ -42,19 +48,35 @@ export default function FirstRun({ onComplete }) {
       enabled: true,
       dailyTime: "14:00",
     },
+    autoReactor: {
+      enabled: false,
+      autoRun: false,
+      feedUrl: "https://www.linkedin.com/feed/",
+      likesPerRun: 20,
+      unlimited: false,
+    },
+    autoCommenter: {
+      enabled: false,
+      autoRun: false,
+      feedUrl: "https://www.linkedin.com/feed/",
+      commentsPerRun: 10,
+      unlimited: false,
+      cfbrEnabled: true,
+      commentInstructions: DEFAULT_COMMENT_INSTRUCTIONS,
+    },
     workContexts: [defaultContext()],
     playwright: {
       browserMode: "managed",
       browserPath: "",
     },
-    installWithDeps: false,
   });
 
   const steps = useMemo(() => ([
     "License",
-    "Runtime & Login",
-    "Automation Settings",
-    "Content Sources",
+    "Install Runtime",
+    "LinkedIn Login",
+    "Basic Settings",
+    "Automation & Context",
   ]), []);
 
   useEffect(() => {
@@ -74,11 +96,18 @@ export default function FirstRun({ onComplete }) {
 
         setSetupData((prev) => ({
           ...prev,
+          generation: settings?.generation || prev.generation,
+          generationInstructions: settings?.generationInstructions || prev.generationInstructions,
           generationProfile: settings?.generationProfile || prev.generationProfile,
           scheduler: settings?.scheduler || prev.scheduler,
           attribution: settings?.attribution || prev.attribution,
+          autoReactor: settings?.autoReactor || prev.autoReactor,
+          autoCommenter: settings?.autoCommenter || prev.autoCommenter,
           workContexts: contexts,
-          playwright: settings?.playwright || prev.playwright,
+          playwright: {
+            browserMode: "managed",
+            browserPath: "",
+          },
         }));
 
         setHasStoredOpenAiKey(settings?.openaiKey === "***");
@@ -164,9 +193,7 @@ export default function FirstRun({ onComplete }) {
       setError("");
       setNotice("");
       setRuntimeLog("[installer] Starting Playwright managed runtime installation...\n");
-      const result = await window.electronAPI.installPlaywrightRuntime({
-        withDeps: setupData.installWithDeps,
-      });
+      const result = await window.electronAPI.installPlaywrightRuntime({});
       if (!result?.output) {
         setRuntimeLog((prev) => `${prev}\n[installer] No additional output returned.\n`);
       }
@@ -196,25 +223,6 @@ export default function FirstRun({ onComplete }) {
     }
   };
 
-  const pickBrowserPath = async () => {
-    try {
-      setError("");
-      const result = await window.electronAPI.pickBrowserExecutable();
-      if (result?.canceled || !result?.path) {
-        return;
-      }
-      setSetupData((prev) => ({
-        ...prev,
-        playwright: {
-          ...prev.playwright,
-          browserPath: result.path,
-        },
-      }));
-    } catch (e) {
-      setError(`Browser picker failed: ${e.message}`);
-    }
-  };
-
   const goNext = () => {
     setError("");
     setNotice("");
@@ -235,11 +243,6 @@ export default function FirstRun({ onComplete }) {
       return;
     }
 
-    if (setupData.playwright.browserMode === "custom" && !setupData.playwright.browserPath.trim()) {
-      setError("Select a browser executable path when using Custom Browser mode.");
-      return;
-    }
-
     const validWorkContexts = setupData.workContexts
       .map((ctx) => ({
         type: ctx.type === "url" ? "url" : "text",
@@ -253,12 +256,26 @@ export default function FirstRun({ onComplete }) {
       return;
     }
 
+    if (!/^https:\/\//i.test(String(setupData.autoReactor.feedUrl || "").trim())) {
+      setError("Auto Reactor feed URL must be a valid https URL.");
+      return;
+    }
+
+    if (!/^https:\/\//i.test(String(setupData.autoCommenter.feedUrl || "").trim())) {
+      setError("Auto Commenter feed URL must be a valid https URL.");
+      return;
+    }
+
     try {
       setBusy(true);
       setError("");
       setNotice("");
 
       const payload = {
+        generation: {
+          maxPostWords: Number(setupData.generation.maxPostWords),
+        },
+        generationInstructions: String(setupData.generationInstructions || "").trim(),
         generationProfile: {
           designation: String(setupData.generationProfile.designation || "").trim(),
           company: String(setupData.generationProfile.company || "").trim(),
@@ -270,10 +287,21 @@ export default function FirstRun({ onComplete }) {
           postsPerDay: Number(setupData.scheduler.postsPerDay),
         },
         attribution: setupData.attribution,
+        autoReactor: {
+          ...setupData.autoReactor,
+          likesPerRun: Number(setupData.autoReactor.likesPerRun),
+          feedUrl: String(setupData.autoReactor.feedUrl || "").trim(),
+        },
+        autoCommenter: {
+          ...setupData.autoCommenter,
+          commentsPerRun: Number(setupData.autoCommenter.commentsPerRun),
+          feedUrl: String(setupData.autoCommenter.feedUrl || "").trim(),
+          commentInstructions: String(setupData.autoCommenter.commentInstructions || "").trim(),
+        },
         workContexts: validWorkContexts,
         playwright: {
-          browserMode: setupData.playwright.browserMode,
-          browserPath: setupData.playwright.browserPath,
+          browserMode: "managed",
+          browserPath: "",
         },
       };
 
@@ -345,105 +373,71 @@ export default function FirstRun({ onComplete }) {
                 <button className="btn btn-primary" type="button" onClick={activateLicense} disabled={busy}>
                   {busy ? "Activating..." : "Activate License"}
                 </button>
-                <button className="btn btn-ghost" type="button" onClick={() => { setTrialAccepted(true); setNotice("Trial mode selected. You can activate later from License page."); }}>Continue with Trial</button>
               </div>
             </section>
 
             <section className="panel">
               <h2 className="panel-title">What Happens Next</h2>
-              <p>1. Install/verify Playwright runtime.</p>
-              <p>2. Refresh LinkedIn login session.</p>
-              <p>3. Add OpenAI key + scheduler defaults.</p>
-              <p>4. Configure context sources and complete setup.</p>
+              <p>1. Install Playwright runtime (required).</p>
+              <p>2. Login to LinkedIn and save session.</p>
+              <p>3. Add OpenAI key and scheduler defaults.</p>
+              <p>4. Configure automation/context and complete setup.</p>
             </section>
           </div>
         )}
 
         {step === 1 && (
-          <div className="grid-2">
-            <section className="panel">
-              <h2 className="panel-title">Playwright Runtime</h2>
-              <div className="form-row">
-                <label>Browser Mode</label>
-                <select
-                  value={setupData.playwright.browserMode}
-                  onChange={(e) => setSetupData((prev) => ({
-                    ...prev,
-                    playwright: { ...prev.playwright, browserMode: e.target.value },
-                  }))}
-                >
-                  <option value="managed">Managed Playwright Chromium</option>
-                  <option value="chrome">System Chrome Channel</option>
-                  <option value="msedge">System Edge Channel</option>
-                  <option value="custom">Custom Executable</option>
-                </select>
-              </div>
+          <section className="panel">
+            <h2 className="panel-title">Install Playwright Runtime (Required)</h2>
+            <p className="page-subtitle">
+              This app uses a managed Playwright Chromium runtime. Click the install button below and wait for completion before continuing.
+            </p>
 
-              {setupData.playwright.browserMode === "managed" && (
-                <>
-                  {navigator.platform.toLowerCase().includes("linux") && (
-                    <div className="form-row">
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={setupData.installWithDeps}
-                          onChange={(e) => setSetupData((prev) => ({ ...prev, installWithDeps: e.target.checked }))}
-                        />
-                        <span style={{ marginLeft: "8px" }}>Install Linux system dependencies too (sudo may be required)</span>
-                      </label>
-                    </div>
-                  )}
-                  <div className="btn-row">
-                    <button className="btn btn-primary" type="button" onClick={installRuntime} disabled={installingRuntime}>
-                      {installingRuntime ? "Installing Runtime..." : "Install Managed Runtime"}
-                    </button>
-                  </div>
-                </>
-              )}
+            <div className="btn-row" style={{ marginTop: "12px" }}>
+              <button className="btn btn-primary" type="button" onClick={installRuntime} disabled={installingRuntime}>
+                {installingRuntime ? "Installing Runtime..." : "Install Runtime"}
+              </button>
+            </div>
 
-              {setupData.playwright.browserMode === "custom" && (
-                <>
-                  <div className="form-row">
-                    <label>Custom Browser Executable</label>
-                    <input
-                      value={setupData.playwright.browserPath}
-                      onChange={(e) => setSetupData((prev) => ({
-                        ...prev,
-                        playwright: { ...prev.playwright, browserPath: e.target.value },
-                      }))}
-                      placeholder="/Applications/Google Chrome.app/.../Google Chrome"
-                    />
-                  </div>
-                  <div className="btn-row">
-                    <button className="btn btn-ghost" type="button" onClick={pickBrowserPath}>Select Executable</button>
-                  </div>
-                </>
-              )}
-
-              <p className="page-subtitle" style={{ marginTop: "12px" }}>
-                Runtime status: {runtimeStatus?.details || "Unknown"}
+            <div className="hero-highlight" style={{ marginTop: "14px" }}>
+              <strong>Runtime Status</strong>
+              <p style={{ margin: "8px 0 0" }}>{runtimeStatus?.details || "Unknown"}</p>
+              <p style={{ margin: "6px 0 0" }}>
+                Install check: {runtimeStatus?.browserReady ? "Ready" : "Not installed yet"}
               </p>
-              {runtimeLog && (
-                <textarea readOnly value={runtimeLog} style={{ marginTop: "10px", minHeight: "110px" }} />
-              )}
-            </section>
+            </div>
 
-            <section className="panel">
-              <h2 className="panel-title">LinkedIn Session</h2>
-              <p className="page-subtitle">Saved session: {loginStatus?.loggedIn ? "Available" : "Missing"}</p>
-              <p className="page-subtitle">Last updated: {loginStatus?.lastUpdated ? new Date(loginStatus.lastUpdated).toLocaleString() : "Never"}</p>
-              <p className="page-subtitle">Path: {loginStatus?.authPath || "N/A"}</p>
-
-              <div className="btn-row" style={{ marginTop: "12px" }}>
-                <button className="btn btn-ghost" type="button" onClick={refreshLogin} disabled={refreshingLogin}>
-                  {refreshingLogin ? "Opening Login..." : "Refresh LinkedIn Login"}
-                </button>
-              </div>
-            </section>
-          </div>
+            {runtimeLog && (
+              <textarea readOnly value={runtimeLog} style={{ marginTop: "12px", minHeight: "140px" }} />
+            )}
+          </section>
         )}
 
         {step === 2 && (
+          <section className="panel">
+            <h2 className="panel-title">Login to LinkedIn</h2>
+            <p className="page-subtitle">
+              Click the button to open LinkedIn login. Complete login and 2FA in the browser window to save your session.
+            </p>
+
+            <div className="btn-row" style={{ marginTop: "12px" }}>
+              <button className="btn btn-primary" type="button" onClick={refreshLogin} disabled={refreshingLogin}>
+                {refreshingLogin ? "Opening Login..." : "Login to LinkedIn"}
+              </button>
+            </div>
+
+            <div className="hero-highlight" style={{ marginTop: "14px" }}>
+              <strong>Login Status</strong>
+              <p style={{ margin: "8px 0 0" }}>Saved session: {loginStatus?.loggedIn ? "Available" : "Missing"}</p>
+              <p style={{ margin: "6px 0 0" }}>
+                Last updated: {loginStatus?.lastUpdated ? new Date(loginStatus.lastUpdated).toLocaleString() : "Never"}
+              </p>
+              <p style={{ margin: "6px 0 0" }}>Path: {loginStatus?.authPath || "N/A"}</p>
+            </div>
+          </section>
+        )}
+
+        {step === 3 && (
           <div className="grid-2">
             <section className="panel">
               <h2 className="panel-title">OpenAI Key</h2>
@@ -459,6 +453,20 @@ export default function FirstRun({ onComplete }) {
                   value={setupData.openaiKey}
                   onChange={(e) => setSetupData((prev) => ({ ...prev, openaiKey: e.target.value }))}
                   placeholder="sk-..."
+                />
+              </div>
+
+              <div className="form-row">
+                <label>Max Words Per Post</label>
+                <input
+                  type="number"
+                  min="50"
+                  max="500"
+                  value={setupData.generation.maxPostWords}
+                  onChange={(e) => setSetupData((prev) => ({
+                    ...prev,
+                    generation: { ...prev.generation, maxPostWords: e.target.value },
+                  }))}
                 />
               </div>
 
@@ -488,6 +496,31 @@ export default function FirstRun({ onComplete }) {
                   />
                 </div>
               </div>
+
+              <div className="form-row" style={{ marginTop: "10px" }}>
+                <label>Generation Instructions</label>
+                <textarea
+                  value={setupData.generationInstructions}
+                  placeholder={DEFAULT_GENERATION_INSTRUCTIONS}
+                  onChange={(e) => setSetupData((prev) => ({
+                    ...prev,
+                    generationInstructions: e.target.value,
+                  }))}
+                  style={{ minHeight: "140px" }}
+                />
+              </div>
+              {setupData.generationInstructions.trim() !== "" && (
+                <div className="btn-row" style={{ marginTop: "6px" }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ fontSize: "12px", padding: "6px 14px" }}
+                    onClick={() => setSetupData((prev) => ({ ...prev, generationInstructions: "" }))}
+                  >
+                    Reset to Default
+                  </button>
+                </div>
+              )}
 
               <div className="form-row" style={{ marginTop: "4px" }}>
                 <label className="checkbox-control">
@@ -586,7 +619,7 @@ export default function FirstRun({ onComplete }) {
           </div>
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <div className="grid-2">
             <section className="panel">
               <h2 className="panel-title">Work Context Sources</h2>
@@ -627,8 +660,181 @@ export default function FirstRun({ onComplete }) {
             </section>
 
             <section className="panel">
-              <h2 className="panel-title">Attribution Settings</h2>
-              <p className="page-subtitle">Configure daily attribution post behavior for free/trial mode.</p>
+              <h2 className="panel-title">Automation & Attribution</h2>
+              <p className="page-subtitle">Configure Auto Reactor, Auto Commenter, and attribution defaults.</p>
+
+              <h3 style={{ marginTop: "12px", marginBottom: "8px", fontSize: "16px" }}>Auto Reactor</h3>
+              <div className="form-row">
+                <label>Feed URL</label>
+                <input
+                  type="url"
+                  value={setupData.autoReactor.feedUrl}
+                  onChange={(e) => setSetupData((prev) => ({
+                    ...prev,
+                    autoReactor: { ...prev.autoReactor, feedUrl: e.target.value },
+                  }))}
+                  placeholder="https://www.linkedin.com/feed/"
+                />
+              </div>
+              <div className="form-row">
+                <label>Reactions Per Run</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="500"
+                  disabled={setupData.autoReactor.unlimited}
+                  value={setupData.autoReactor.likesPerRun}
+                  onChange={(e) => setSetupData((prev) => ({
+                    ...prev,
+                    autoReactor: { ...prev.autoReactor, likesPerRun: e.target.value },
+                  }))}
+                />
+              </div>
+              <div className="form-row" style={{ marginTop: "4px" }}>
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={setupData.autoReactor.unlimited}
+                    onChange={(e) => setSetupData((prev) => ({
+                      ...prev,
+                      autoReactor: { ...prev.autoReactor, unlimited: e.target.checked },
+                    }))}
+                  />
+                  <span className="checkbox-label-text">Unlimited mode</span>
+                </label>
+              </div>
+              <div className="btn-row" style={{ marginTop: "4px", marginBottom: "10px" }}>
+                <button
+                  type="button"
+                  className={`btn ${setupData.autoReactor.enabled ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => setSetupData((prev) => ({
+                    ...prev,
+                    autoReactor: { ...prev.autoReactor, enabled: !prev.autoReactor.enabled },
+                  }))}
+                >
+                  Auto Reactor {setupData.autoReactor.enabled ? "Enabled" : "Disabled"}
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${setupData.autoReactor.autoRun ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => setSetupData((prev) => ({
+                    ...prev,
+                    autoReactor: { ...prev.autoReactor, autoRun: !prev.autoReactor.autoRun },
+                  }))}
+                >
+                  Auto Run {setupData.autoReactor.autoRun ? "On" : "Off"}
+                </button>
+              </div>
+
+              <h3 style={{ marginTop: "8px", marginBottom: "8px", fontSize: "16px" }}>Auto Commenter</h3>
+              <div className="form-row">
+                <label>Feed URL</label>
+                <input
+                  type="url"
+                  value={setupData.autoCommenter.feedUrl}
+                  onChange={(e) => setSetupData((prev) => ({
+                    ...prev,
+                    autoCommenter: { ...prev.autoCommenter, feedUrl: e.target.value },
+                  }))}
+                  placeholder="https://www.linkedin.com/feed/"
+                />
+              </div>
+              <div className="form-row">
+                <label>Comments Per Run</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="300"
+                  disabled={setupData.autoCommenter.unlimited}
+                  value={setupData.autoCommenter.commentsPerRun}
+                  onChange={(e) => setSetupData((prev) => ({
+                    ...prev,
+                    autoCommenter: { ...prev.autoCommenter, commentsPerRun: e.target.value },
+                  }))}
+                />
+              </div>
+              <div className="form-row" style={{ marginTop: "4px" }}>
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={setupData.autoCommenter.unlimited}
+                    onChange={(e) => setSetupData((prev) => ({
+                      ...prev,
+                      autoCommenter: { ...prev.autoCommenter, unlimited: e.target.checked },
+                    }))}
+                  />
+                  <span className="checkbox-label-text">Unlimited mode</span>
+                </label>
+              </div>
+              <div className="form-row" style={{ marginTop: "4px" }}>
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={setupData.autoCommenter.cfbrEnabled !== false}
+                    onChange={(e) => setSetupData((prev) => ({
+                      ...prev,
+                      autoCommenter: { ...prev.autoCommenter, cfbrEnabled: e.target.checked },
+                    }))}
+                  />
+                  <span className="checkbox-label-text">CFBR mode for job/boost-reach posts</span>
+                </label>
+              </div>
+              <div className="form-row" style={{ marginTop: "8px" }}>
+                <label>Comment Instructions</label>
+                <textarea
+                  rows={4}
+                  value={setupData.autoCommenter.commentInstructions || ""}
+                  onChange={(e) => setSetupData((prev) => ({
+                    ...prev,
+                    autoCommenter: { ...prev.autoCommenter, commentInstructions: e.target.value },
+                  }))}
+                  placeholder="Instructions for the AI when generating comments..."
+                  style={{ resize: "vertical" }}
+                />
+              </div>
+              {String(setupData.autoCommenter.commentInstructions || "").trim() !== "" && (
+                <div className="btn-row" style={{ marginTop: "6px" }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ fontSize: "12px", padding: "6px 14px" }}
+                    onClick={() => setSetupData((prev) => ({
+                      ...prev,
+                      autoCommenter: {
+                        ...prev.autoCommenter,
+                        commentInstructions: DEFAULT_COMMENT_INSTRUCTIONS,
+                      },
+                    }))}
+                  >
+                    Reset Comment Instructions
+                  </button>
+                </div>
+              )}
+
+              <div className="btn-row" style={{ marginTop: "4px", marginBottom: "10px" }}>
+                <button
+                  type="button"
+                  className={`btn ${setupData.autoCommenter.enabled ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => setSetupData((prev) => ({
+                    ...prev,
+                    autoCommenter: { ...prev.autoCommenter, enabled: !prev.autoCommenter.enabled },
+                  }))}
+                >
+                  Auto Commenter {setupData.autoCommenter.enabled ? "Enabled" : "Disabled"}
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${setupData.autoCommenter.autoRun ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => setSetupData((prev) => ({
+                    ...prev,
+                    autoCommenter: { ...prev.autoCommenter, autoRun: !prev.autoCommenter.autoRun },
+                  }))}
+                >
+                  Auto Run {setupData.autoCommenter.autoRun ? "On" : "Off"}
+                </button>
+              </div>
+
+              <h3 style={{ marginTop: "8px", marginBottom: "8px", fontSize: "16px" }}>Attribution</h3>
               <div className="form-row" style={{ marginTop: "12px" }}>
                 <label>Attribution Time</label>
                 <input
@@ -673,14 +879,43 @@ export default function FirstRun({ onComplete }) {
         {(() => {
           let nextDisabled = busy;
           if (step === 0) nextDisabled = nextDisabled || (!licenseStatus?.licensed && !trialAccepted);
-          if (step === 1) nextDisabled = nextDisabled || !runtimeStatus?.browserReady || !loginStatus?.loggedIn;
-          if (step === 2) nextDisabled = nextDisabled || (!hasStoredOpenAiKey && !setupData.openaiKey.trim());
+          if (step === 1) nextDisabled = nextDisabled || !runtimeStatus?.browserReady;
+          if (step === 2) nextDisabled = nextDisabled || !loginStatus?.loggedIn;
+          if (step === 3) nextDisabled = nextDisabled || (!hasStoredOpenAiKey && !setupData.openaiKey.trim());
+
+          let primaryAction = null;
+          if (step < steps.length - 1) {
+            if (step === 0 && !licenseStatus?.licensed && !trialAccepted) {
+              primaryAction = (
+                <button className="btn btn-primary" type="button" onClick={() => { setTrialAccepted(true); setNotice("Trial mode selected. You can activate later from the License page."); }} disabled={busy}>
+                  Start Trial
+                </button>
+              );
+            } else if (step === 1 && !runtimeStatus?.browserReady) {
+              primaryAction = (
+                <button className="btn btn-primary" type="button" onClick={installRuntime} disabled={installingRuntime || busy}>
+                  {installingRuntime ? "Installing Runtime..." : "Install Runtime"}
+                </button>
+              );
+            } else if (step === 2 && !loginStatus?.loggedIn) {
+              primaryAction = (
+                <button className="btn btn-primary" type="button" onClick={refreshLogin} disabled={refreshingLogin || busy}>
+                  {refreshingLogin ? "Opening Login..." : "Login to LinkedIn"}
+                </button>
+              );
+            } else {
+              primaryAction = (
+                <button className="btn btn-primary" type="button" onClick={goNext} disabled={nextDisabled}>Next</button>
+              );
+            }
+          }
+
           return (
         <div className="btn-row" style={{ marginTop: "18px", justifyContent: "space-between" }}>
           <button className="btn btn-ghost" type="button" onClick={goBack} disabled={step === 0 || busy}>Back</button>
           <div className="btn-row">
             {step < steps.length - 1 ? (
-              <button className="btn btn-primary" type="button" onClick={goNext} disabled={nextDisabled}>Next</button>
+              primaryAction
             ) : (
               <button className="btn btn-primary" type="button" onClick={completeSetup} disabled={busy}>
                 {busy ? "Finishing Setup..." : "Complete Setup"}

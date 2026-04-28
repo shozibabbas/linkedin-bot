@@ -158,6 +158,55 @@ class SettingsService {
     }
   }
 
+  // Auto commenter settings
+  getAutoCommenterSettings() {
+    const defaultInstructions = "Write as a senior software engineer. Be specific and add genuine value. Reference a detail from the post. Never be generic. Sound like a real person, not a bot.";
+    return {
+      enabled: this.parseBoolean(getSetting("auto_commenter_enabled", "false")),
+      autoRun: this.parseBoolean(getSetting("auto_commenter_auto_run", "false")),
+      feedUrl: String(getSetting("auto_commenter_feed_url", "https://www.linkedin.com/feed/") || "https://www.linkedin.com/feed/").trim(),
+      commentsPerRun: Math.max(1, Math.min(300, this.parseNumber(getSetting("auto_commenter_comments_per_run", "10"), 10))),
+      unlimited: this.parseBoolean(getSetting("auto_commenter_unlimited", "false")),
+      cfbrEnabled: this.parseBoolean(getSetting("auto_commenter_cfbr_enabled", "true")),
+      commentInstructions: String(getSetting("auto_commenter_comment_instructions", defaultInstructions) || defaultInstructions).trim(),
+    };
+  }
+
+  updateAutoCommenterSettings(settings) {
+    if (Object.prototype.hasOwnProperty.call(settings, "enabled")) {
+      setSetting("auto_commenter_enabled", settings.enabled ? "true" : "false");
+    }
+
+    if (Object.prototype.hasOwnProperty.call(settings, "autoRun")) {
+      setSetting("auto_commenter_auto_run", settings.autoRun ? "true" : "false");
+    }
+
+    if (Object.prototype.hasOwnProperty.call(settings, "feedUrl")) {
+      const nextUrl = String(settings.feedUrl || "https://www.linkedin.com/feed/").trim();
+      if (!/^https:\/\//i.test(nextUrl)) {
+        throw new Error("Auto commenter feed URL must be a valid https URL");
+      }
+      setSetting("auto_commenter_feed_url", nextUrl);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(settings, "commentsPerRun")) {
+      const count = Math.max(1, Math.min(300, Math.floor(Number(settings.commentsPerRun) || 10)));
+      setSetting("auto_commenter_comments_per_run", String(count));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(settings, "unlimited")) {
+      setSetting("auto_commenter_unlimited", settings.unlimited ? "true" : "false");
+    }
+
+    if (Object.prototype.hasOwnProperty.call(settings, "cfbrEnabled")) {
+      setSetting("auto_commenter_cfbr_enabled", settings.cfbrEnabled ? "true" : "false");
+    }
+
+    if (Object.prototype.hasOwnProperty.call(settings, "commentInstructions")) {
+      setSetting("auto_commenter_comment_instructions", String(settings.commentInstructions || "").trim());
+    }
+  }
+
   // Work Context (URLs and text to cycle through)
   normalizeWorkContexts(contexts) {
     if (!Array.isArray(contexts)) {
@@ -248,6 +297,7 @@ class SettingsService {
       generationProfile: this.getGenerationProfileSettings(),
       scheduler: this.getSchedulerSettings(),
       autoReactor: this.getAutoReactorSettings(),
+      autoCommenter: this.getAutoCommenterSettings(),
       workContexts: this.getWorkContexts(),
       attribution: this.getAttributionSettings(),
       playwright: this.getPlaywrightSettings(),
@@ -301,6 +351,10 @@ ipcMain.handle("update-settings", async (event, settings) => {
 
     if (settings.autoReactor) {
       settingsService.updateAutoReactorSettings(settings.autoReactor);
+    }
+
+    if (settings.autoCommenter) {
+      settingsService.updateAutoCommenterSettings(settings.autoCommenter);
     }
 
     if (settings.generation) {
@@ -357,6 +411,10 @@ ipcMain.handle("complete-first-time-setup", async (event, setupPayload = {}) => 
 
     if (setupPayload.autoReactor) {
       settingsService.updateAutoReactorSettings(setupPayload.autoReactor);
+    }
+
+    if (setupPayload.autoCommenter) {
+      settingsService.updateAutoCommenterSettings(setupPayload.autoCommenter);
     }
 
     if (setupPayload.generation) {

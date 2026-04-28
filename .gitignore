@@ -6,4 +6,6 @@ posts.db
 .DS_Store
 dist/**
 dist-app/**
+out/*.mp4
+out/*.mov
 .gitignore

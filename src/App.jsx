@@ -8,6 +8,7 @@ import Settings from "./pages/Settings";
 import FirstRun from "./pages/FirstRun";
 import SchedulerRunWizard from "./pages/SchedulerRunWizard";
 import AutoReactor from "./pages/AutoReactor";
+import AutoCommenter from "./pages/AutoCommenter";
 import Tutorials from "./pages/Tutorials";
 import FAQs from "./pages/FAQs";
 import Terms from "./pages/Terms";
@@ -79,6 +80,8 @@ export default function App() {
         return <SchedulerRunWizard onDone={() => setCurrentPage("dashboard")} />;
       case "auto-reactor":
         return <AutoReactor />;
+      case "auto-commenter":
+        return <AutoCommenter />;
       case "settings":
         return <Settings />;
       case "license":
