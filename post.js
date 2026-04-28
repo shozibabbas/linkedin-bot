@@ -4,7 +4,7 @@ const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const dotenv = require("dotenv");
 const { chromium } = require("playwright");
-const { app } = require("electron");
+const { getWritableAppDirectory } = require("./app-paths");
 
 const { getNextPendingPost, markPosted, markFailed, getSetting } = require("./db");
 const { sendPostResultEmail } = require("./email");
@@ -13,9 +13,7 @@ dotenv.config();
 
 const execFileAsync = promisify(execFile);
 
-const authDir = app.isPackaged 
-  ? app.getPath("userData") 
-  : __dirname;
+const authDir = getWritableAppDirectory(__dirname);
 const AUTH_PATH = path.join(authDir, "auth.json");
 
 function getBrowserLaunchOptions() {

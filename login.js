@@ -2,12 +2,10 @@ const path = require("node:path");
 const readline = require("node:readline/promises");
 const { stdin: input, stdout: output } = require("node:process");
 const { chromium } = require("playwright");
-const { app } = require("electron");
+const { getWritableAppDirectory } = require("./app-paths");
 const { getSetting } = require("./db");
 
-const authDir = app.isPackaged 
-  ? app.getPath("userData") 
-  : __dirname;
+const authDir = getWritableAppDirectory(__dirname);
 const AUTH_PATH = path.join(authDir, "auth.json");
 
 function getBrowserLaunchOptions() {

@@ -1,11 +1,9 @@
 const path = require("node:path");
 const Database = require("better-sqlite3");
-const { app } = require("electron");
+const { getWritableAppDirectory } = require("./app-paths");
 
 // In packaged app, use userData directory (writable); in dev, use project root
-const dbDir = app.isPackaged 
-  ? app.getPath("userData") 
-  : __dirname;
+const dbDir = getWritableAppDirectory(__dirname);
 const dbPath = path.join(dbDir, "posts.db");
 const db = new Database(dbPath);
 

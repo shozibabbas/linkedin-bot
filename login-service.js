@@ -62,6 +62,7 @@ function runLoginRefresh() {
     const childEnv = {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
+      LINKEDIN_BOT_USER_DATA: app.getPath("userData"),
     };
 
     const child = spawn(process.execPath, [getLoginScriptPath()], {
