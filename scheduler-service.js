@@ -1,6 +1,6 @@
 const { ipcMain } = require("electron");
 const cron = require("node-cron");
-const { listScheduledPostsV2, createPostV2, markPostV2AsPosted, markPostV2AsFailed } = require("./db");
+const { listScheduledPostsV2, createPostV2, markPostV2AsPosted, markPostV2AsFailed, getSetting, setSetting } = require("./db");
 const { generatePostContent, generateAttributionPostContent } = require("./posts-service");
 const { settingsService } = require("./settings-service");
 const { licenseManager } = require("./license");
@@ -33,6 +33,18 @@ function clampFutureSchedule(dateInput) {
 
 function toRunEntryId(index) {
   return `entry-${Date.now()}-${index}-${Math.floor(Math.random() * 9999)}`;
+}
+
+const SCHEDULER_ARRANGEMENT_KEY = "scheduler_saved_arrangement_v1";
+
+function toTimeOfDay(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
 }
 
 function stripHtml(value) {
@@ -170,6 +182,97 @@ class SchedulerService {
     return `${year}-${month}-${day}`;
   }
 
+  getSavedArrangementEntries() {
+    const raw = getSetting(SCHEDULER_ARRANGEMENT_KEY, "[]");
+    try {
+      const parsed = JSON.parse(String(raw || "[]"));
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      return parsed
+        .map((entry, index) => {
+          const type = entry?.type === "attribution" ? "attribution" : "generated";
+          const timeOfDay = String(entry?.timeOfDay || "").trim();
+          const sourceType = entry?.source?.type === "url" ? "url" : "text";
+          const sourceValue = String(entry?.source?.value || "").trim();
+          const sourcePrompt = String(entry?.source?.prompt || "").trim();
+          const customPrompt = String(entry?.customPrompt || "").trim();
+
+          if (!timeOfDay || !/^([0-1]?\d|2[0-3]):[0-5]\d$/.test(timeOfDay)) {
+            return null;
+          }
+
+          if (type !== "attribution" && !sourceValue) {
+            return null;
+          }
+
+          return {
+            id: `saved-entry-${index + 1}`,
+            type,
+            timeOfDay,
+            source: type === "attribution"
+              ? null
+              : {
+                  type: sourceType,
+                  value: sourceValue,
+                  prompt: sourcePrompt,
+                },
+            customPrompt,
+          };
+        })
+        .filter(Boolean);
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  saveArrangementEntries(entries = []) {
+    if (!Array.isArray(entries)) {
+      return;
+    }
+
+    const normalized = entries
+      .map((entry) => {
+        const type = entry?.type === "attribution" ? "attribution" : "generated";
+        const timeOfDay = toTimeOfDay(entry?.scheduledAt);
+        if (!timeOfDay) {
+          return null;
+        }
+
+        if (type === "attribution") {
+          return {
+            type,
+            timeOfDay,
+            source: null,
+            customPrompt: "",
+          };
+        }
+
+        const sourceType = entry?.source?.type === "url" ? "url" : "text";
+        const sourceValue = String(entry?.source?.value || "").trim();
+        if (!sourceValue) {
+          return null;
+        }
+
+        return {
+          type,
+          timeOfDay,
+          source: {
+            type: sourceType,
+            value: sourceValue,
+            prompt: String(entry?.source?.prompt || "").trim(),
+          },
+          customPrompt: String(entry?.customPrompt || "").trim(),
+        };
+      })
+      .filter(Boolean);
+
+    if (normalized.length) {
+      setSetting(SCHEDULER_ARRANGEMENT_KEY, JSON.stringify(normalized));
+    }
+  }
+
   // Calculate time slots for the day
   calculateTimeSlots(startTime, endTime, postCount) {
     const [startHour, startMin] = startTime.split(":").map(Number);
@@ -276,40 +379,76 @@ class SchedulerService {
     const attribution = settingsService.getAttributionSettings();
     const contexts = settingsService.getWorkContexts();
     const constraints = this.getRunConstraints();
+    const savedArrangement = this.getSavedArrangementEntries();
 
-    if (!contexts.length) {
+    if (!contexts.length && !savedArrangement.some((entry) => entry.type !== "attribution")) {
       throw new Error("No work context sources are configured. Add at least one source in Settings.");
     }
 
     const eligibleContexts = contexts.slice(0, constraints.maxContextSources);
-    const requestedCount = Math.max(1, Math.min(Number(scheduler.postsPerDay) || 1, constraints.maxPosts));
-    const timeSlots = this.calculateTimeSlots(scheduler.startTime, scheduler.endTime, requestedCount);
-
     const entries = [];
-    for (let index = 0; index < requestedCount; index++) {
-      const source = eligibleContexts[index % eligibleContexts.length];
-      entries.push({
-        id: toRunEntryId(index),
-        type: "generated",
-        scheduledAt: clampFutureSchedule(timeSlots[index]).toISOString(),
-        source: {
-          type: source.type,
-          value: source.value,
-          prompt: source.prompt || "",
-        },
-        customPrompt: "",
-        generatedContent: "",
-        generationStatus: "planned",
-        postingStatus: "pending",
-        error: "",
-      });
+    const requestedCount = Math.max(1, Math.min(Number(scheduler.postsPerDay) || 1, constraints.maxPosts));
+    const savedGenerated = savedArrangement.filter((entry) => entry.type !== "attribution").slice(0, requestedCount);
+
+    if (savedGenerated.length) {
+      for (let index = 0; index < savedGenerated.length; index++) {
+        const saved = savedGenerated[index];
+        const fallbackSource = eligibleContexts.length
+          ? eligibleContexts[index % eligibleContexts.length]
+          : { type: "text", value: "", prompt: "" };
+        const sourceValue = String(saved?.source?.value || "").trim();
+        const source = sourceValue
+          ? {
+              type: saved.source.type === "url" ? "url" : "text",
+              value: sourceValue,
+              prompt: String(saved?.source?.prompt || "").trim(),
+            }
+          : {
+              type: fallbackSource.type,
+              value: fallbackSource.value,
+              prompt: fallbackSource.prompt || "",
+            };
+
+        entries.push({
+          id: toRunEntryId(index),
+          type: "generated",
+          scheduledAt: clampFutureSchedule(parseTimeToToday(saved.timeOfDay)).toISOString(),
+          source,
+          customPrompt: String(saved.customPrompt || "").trim(),
+          generatedContent: "",
+          generationStatus: "planned",
+          postingStatus: "pending",
+          error: "",
+        });
+      }
+    } else {
+      const timeSlots = this.calculateTimeSlots(scheduler.startTime, scheduler.endTime, requestedCount);
+      for (let index = 0; index < requestedCount; index++) {
+        const source = eligibleContexts[index % eligibleContexts.length];
+        entries.push({
+          id: toRunEntryId(index),
+          type: "generated",
+          scheduledAt: clampFutureSchedule(timeSlots[index]).toISOString(),
+          source: {
+            type: source.type,
+            value: source.value,
+            prompt: source.prompt || "",
+          },
+          customPrompt: "",
+          generatedContent: "",
+          generationStatus: "planned",
+          postingStatus: "pending",
+          error: "",
+        });
+      }
     }
 
     if (constraints.attributionRequired && attribution.enabled) {
+      const savedAttribution = savedArrangement.find((entry) => entry.type === "attribution");
       entries.push({
         id: toRunEntryId(entries.length + 1),
         type: "attribution",
-        scheduledAt: clampFutureSchedule(parseTimeToToday(attribution.dailyTime)).toISOString(),
+        scheduledAt: clampFutureSchedule(parseTimeToToday(savedAttribution?.timeOfDay || attribution.dailyTime)).toISOString(),
         source: null,
         customPrompt: "",
         generatedContent: "",
@@ -573,26 +712,65 @@ class SchedulerService {
         postsPerDay = Math.min(2, postsPerDay); // Free tier: max 2 posts
       }
 
-      // Generate posts
-      const generatedPosts = await this.generateDailyPosts(postsPerDay);
-      if (generatedPosts.length === 0) {
+      const savedArrangement = this.getSavedArrangementEntries();
+      const savedGenerated = savedArrangement.filter((entry) => entry.type !== "attribution").slice(0, postsPerDay);
+      const usedFeedLinks = new Set();
+      const plan = [];
+
+      if (savedGenerated.length) {
+        for (const entry of savedGenerated) {
+          const generatedContent = await this.generateOneEntry(
+            {
+              ...entry,
+              source: {
+                type: entry.source?.type === "url" ? "url" : "text",
+                value: String(entry.source?.value || "").trim(),
+                prompt: String(entry.source?.prompt || "").trim(),
+              },
+              scheduledAt: parseTimeToToday(entry.timeOfDay).toISOString(),
+            },
+            usedFeedLinks
+          );
+
+          plan.push({
+            type: "generated",
+            content: generatedContent,
+            scheduledAt: clampFutureSchedule(parseTimeToToday(entry.timeOfDay)),
+            sourceUrl: entry.source?.type === "url" ? String(entry.source?.value || "") : null,
+          });
+        }
+      } else {
+        // Fallback for first run: keep existing behavior when no arrangement has been saved yet.
+        const generatedPosts = await this.generateDailyPosts(postsPerDay);
+        const timeSlots = this.calculateTimeSlots(settings.startTime, settings.endTime, generatedPosts.length);
+        for (let i = 0; i < generatedPosts.length; i++) {
+          plan.push({
+            type: generatedPosts[i].type,
+            content: generatedPosts[i].content,
+            scheduledAt: timeSlots[i],
+            sourceUrl: null,
+          });
+        }
+      }
+
+      if (plan.length === 0) {
         console.warn("[Scheduler] No posts generated");
         return { success: false, reason: "No posts generated" };
       }
 
       // Create posts in database and submit them through Playwright flow
-      const timeSlots = this.calculateTimeSlots(settings.startTime, settings.endTime, generatedPosts.length);
       const createdPostIds = [];
 
-      for (let i = 0; i < generatedPosts.length; i++) {
-        const post = generatedPosts[i];
-        const scheduledAt = timeSlots[i];
+      for (let i = 0; i < plan.length; i++) {
+        const post = plan[i];
+        const scheduledAt = post.scheduledAt;
 
         const createdPost = createPostV2({
           content: post.content,
           type: post.type,
           status: "pending",
           scheduled_at: null,
+          source_url: post.sourceUrl,
         });
 
         const flowResult = await runPostingFlow(
@@ -620,9 +798,9 @@ class SchedulerService {
       // Add attribution post if free tier and past day 7
       if (this.shouldAddAttributionPost()) {
         const attributionContent = await generateAttributionPostContent();
-        const attributionTime = new Date();
-        const [hour, min] = settingsService.getAttributionSettings().dailyTime.split(":").map(Number);
-        attributionTime.setHours(hour, min, 0, 0);
+        const attributionSetting = settingsService.getAttributionSettings().dailyTime;
+        const savedAttribution = savedArrangement.find((entry) => entry.type === "attribution");
+        const attributionTime = clampFutureSchedule(parseTimeToToday(savedAttribution?.timeOfDay || attributionSetting));
 
         const attributionPost = createPostV2({
           content: attributionContent,
@@ -757,6 +935,9 @@ ipcMain.handle("generate-scheduler-run-drafts", async (event, payload = {}) => {
     const sessionId = String(payload.sessionId || `${Date.now()}-${Math.floor(Math.random() * 9999)}`);
     const constraints = payload.constraints || schedulerService.getRunConstraints();
     const entries = Array.isArray(payload.entries) ? payload.entries : [];
+
+    schedulerService.saveArrangementEntries(entries);
+
     const generatedEntries = await schedulerService.generateRunDrafts(event.sender, entries, constraints, sessionId);
     const failedCount = generatedEntries.filter((entry) => entry.generationStatus === "failed").length;
 
@@ -832,6 +1013,8 @@ ipcMain.handle("execute-scheduler-run", async (event, payload = {}) => {
     const sessionId = String(payload.sessionId || `${Date.now()}-${Math.floor(Math.random() * 9999)}`);
     const constraints = payload.constraints || schedulerService.getRunConstraints();
     const entries = Array.isArray(payload.entries) ? payload.entries : [];
+
+    schedulerService.saveArrangementEntries(entries);
 
     const results = await schedulerService.postRunEntries(event.sender, entries, constraints, sessionId);
     const failedCount = results.filter((result) => !result.success).length;

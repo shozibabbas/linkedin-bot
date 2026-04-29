@@ -184,12 +184,6 @@ class AutoReactorService {
   }
 
   async keepPageInteractive(page) {
-    try {
-      await page.bringToFront();
-    } catch (_error) {
-      // ignore bring-to-front errors
-    }
-
     const viewport = page.viewportSize() || { width: 1280, height: 800 };
     const x = randomBetween(80, Math.max(100, viewport.width - 80));
     const y = randomBetween(120, Math.max(140, viewport.height - 120));
@@ -272,6 +266,12 @@ class AutoReactorService {
 
     const launchOptions = {
       headless: false,
+      args: [
+        // Keep automation responsive while window is minimized/occluded without stealing focus.
+        "--disable-backgrounding-occluded-windows",
+        "--disable-background-timer-throttling",
+        "--disable-renderer-backgrounding",
+      ],
       ...getBrowserLaunchOptions(),
     };
 

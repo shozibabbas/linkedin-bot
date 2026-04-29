@@ -1,7 +1,7 @@
 const { ipcMain } = require("electron");
 const axios = require("axios");
 const cheerio = require("cheerio");
-const { createPostV2, getPostV2ById, listPostsV2, updatePostV2, deletePostV2, listScheduledPostsV2, markPostV2AsScheduled, markPostV2AsPosted, markPostV2AsFailed } = require("./db");
+const { createPostV2, getPostV2ById, listPostsV2, updatePostV2, deletePostV2, listScheduledPostsV2, markPostV2AsPosted, markPostV2AsFailed } = require("./db");
 const { getSetting } = require("./db");
 const { runPostingFlow } = require("./post");
 
@@ -316,12 +316,41 @@ class PostsService {
   }
 
   // Schedule post for later
-  scheduleForLater(postId, scheduledAt) {
+  async scheduleForLater(postId, scheduledAt) {
     if (!scheduledAt || scheduledAt <= new Date()) {
       throw new Error("Scheduled time must be in the future");
     }
 
-    return markPostV2AsScheduled(postId, scheduledAt.toISOString());
+    const post = this.getPost(postId);
+    if (!post) {
+      throw new Error(`Post ${postId} not found`);
+    }
+
+    try {
+      const result = await runPostingFlow(
+        {
+          id: post.id,
+          content: post.content,
+        },
+        {
+          skipApproval: true,
+          sendResultEmail: false,
+          scheduleAt: scheduledAt,
+          fastMode: true,
+        }
+      );
+
+      if (!result?.ok) {
+        const reason = result?.reason || "Playwright posting flow failed";
+        markPostV2AsFailed(post.id, reason);
+        throw new Error(reason);
+      }
+
+      return markPostV2AsPosted(post.id);
+    } catch (error) {
+      markPostV2AsFailed(post.id, error.message || "Playwright posting flow failed");
+      throw error;
+    }
   }
 
   // Post now (15 min ahead to avoid LinkedIn timing issues)
@@ -444,7 +473,7 @@ ipcMain.handle("post-now", async (event, postId) => {
 ipcMain.handle("schedule-for-later", async (event, postId, scheduledAtString) => {
   try {
     const scheduledAt = new Date(scheduledAtString);
-    return postsService.scheduleForLater(postId, scheduledAt);
+    return await postsService.scheduleForLater(postId, scheduledAt);
   } catch (error) {
     throw new Error(error.message);
   }
